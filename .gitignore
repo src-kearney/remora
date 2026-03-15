@@ -1,3 +1,5 @@
+moe-compiler-plan.md
+
 # Prerequisites
 *.d
 
@@ -39,3 +41,21 @@
 
 # debug information files
 *.dwo
+
+# Build dependencies (produced by scripts/bootstrap.sh)
+build-deps/
+
+# Compiler build output
+compiler/build/
+compiler/build.log
+
+# Editor
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environment files
+.env
+.env.*
+!.env.example
