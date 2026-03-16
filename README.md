@@ -72,7 +72,7 @@ If you used the default `build-deps/` location these will be `<repo-root>/build-
 ### 3. Build remora-compiler
 
 ```bash
-scripts/build.sh
+sh scripts/build.sh
 ```
 
 This sources `.env`, runs CMake, and produces `compiler/build/remora-compiler`.
@@ -95,7 +95,14 @@ scripts/attention_elementwise_lower_to_linalg.sh
 scripts/attention_projection_lowered_to_linalg.sh
 ```
 
-Outputs are written to `mlir/linalg/`. These scripts use `stablehlo-opt` directly; set `STABLEHLO_OPT` in your environment if it is not on your PATH:
+Outputs are written to `mlir/linalg/`. To see the full transformation — StableHLO broadcast/add/relu collapsed into a single fused `linalg.generic` — diff the input against the output:
+
+```bash
+diff <(compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir) \
+     mlir/linalg/attention_elementwise_lowered_to_linalg.mlir
+```
+
+These scripts use `stablehlo-opt` directly; set `STABLEHLO_OPT` in your environment if it is not on your PATH:
 
 ```bash
 export STABLEHLO_OPT=/path/to/build-deps/stablehlo/build/bin/stablehlo-opt
@@ -114,8 +121,8 @@ Runs the elementwise attention file through several progressive lowering steps a
 ```bash
 cd jax
 pip install -r requirements.txt
-python simple_attention_elementwise.py
-python simple_attention_projection.py
+python simple_attention_elementwise.py > ../mlir/stablehlo/simple_attention_elementwise.mlir
+python simple_attention_projection.py > ../mlir/stablehlo/simple_attention_projection.mlir
 ```
 
-Outputs are written to `mlir/stablehlo/`.
+Both scripts print the exported StableHLO module to stdout; redirect to overwrite the checked-in files.
