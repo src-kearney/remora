@@ -36,10 +36,8 @@ int main(int argc, char **argv) {
   /// default it will implicitly create a thread pool.
   mlir::MLIRContext ctx(registry);
 
-  mlir::PassManager pm(&ctx);
-  pm.addPass(mlir::stablehlo::createStablehloLegalizeToLinalgPass());
-  pm.addPass(mlir::createInlinerPass());
-  pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
+  bool debug = argc > 2 && llvm::StringRef(argv[2]) == "--mlir-print-ir-after-all";
+  if (debug) ctx.disableMultithreading(); // required for `enableIRPrinting`
 
   /// https://github.com/llvm/llvm-project/blob/f46a5153850c1303d687233d4adf699b01041da8/mlir/include/mlir/IR/OwningOpRef.h#L29
   /// This class acts as an owning reference to an op, and will automatically
@@ -53,6 +51,17 @@ int main(int argc, char **argv) {
     llvm::errs() << "Failed to parse: " << argv[1] << "\n";
     return 1;
   }
+
+  mlir::PassManager pm(&ctx);
+  if (debug) pm.enableIRPrinting(
+    /*shouldPrintBeforePass=*/nullptr,
+    /*shouldPrintAfterPass=*/[](mlir::Pass *, mlir::Operation *) { return true; },
+    /*printModuleScope=*/true,
+    /*printAfterOnlyOnChange=*/true
+  );
+  pm.addPass(mlir::stablehlo::createStablehloLegalizeToLinalgPass());
+  pm.addPass(mlir::createInlinerPass());
+  pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
 
   if (mlir::failed(pm.run(*module))) {
     llvm::errs() << "Pass pipeline failed\n";
