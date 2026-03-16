@@ -87,19 +87,6 @@ This sources `.env`, runs CMake, and produces `compiler/build/remora-compiler`.
 compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir
 ```
 
-One useful property: the compiler strips JAX-generated location annotations (`loc(...)`), yielding clean IR. You can verify round-trip fidelity and see exactly what gets dropped:
-
-```bash
-# elementwise: relu(x + bias)
-diff <(compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir) \
-     mlir/stablehlo/simple_attention_elementwise.mlir
-
-# projection: dot_general (matmul)
-diff <(compiler/build/remora-compiler mlir/stablehlo/simple_attention_projection.mlir) \
-     mlir/stablehlo/simple_attention_projection.mlir
-```
-
-The diff reveals what the compiler strips: all per-op `loc(...)` annotations and the `#loc` alias block at the end of the file. The ops, types, and structure are otherwise identical.
 
 ### Lower StableHLO → Linalg
 
