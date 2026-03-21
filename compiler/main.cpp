@@ -71,9 +71,63 @@ static int runElementwise(mlir::ExecutionEngine &engine) {
   return 0;
 }
 
+// Run the attention projection kernel via the JIT engine and print a sample of the output.
+// Inputs: x = all 1.0 (1x512x768), w = all 1/768 (768x768)
+// Expected: dot_general(x, w) = 768 * (1.0 * 1/768) = 1.0 everywhere
+static int runProjection(mlir::ExecutionEngine &engine) {
+  const int64_t N = 1, T = 512, D = 768;
+  std::vector<float> x_data(N * T * D, 1.0f);
+  std::vector<float> w_data(D * D, 1.0f / D);
+
+  StridedMemRefType<float, 3> x_desc;
+  x_desc.basePtr = x_desc.data = x_data.data();
+  x_desc.offset = 0;
+  x_desc.sizes[0] = N; x_desc.sizes[1] = T; x_desc.sizes[2] = D;
+  x_desc.strides[0] = T * D; x_desc.strides[1] = D; x_desc.strides[2] = 1;
+
+  StridedMemRefType<float, 2> w_desc;
+  w_desc.basePtr = w_desc.data = w_data.data();
+  w_desc.offset = 0;
+  w_desc.sizes[0] = D; w_desc.sizes[1] = D;
+  w_desc.strides[0] = D; w_desc.strides[1] = 1;
+
+  // result is malloc'd inside the kernel; the descriptor is filled by the wrapper
+  StridedMemRefType<float, 3> result;
+
+  // _mlir_ciface_main(result*, x*, w*) - each arg is a pointer to a memref descriptor.
+  auto sym = engine.lookup("_mlir_ciface_main");
+  if (!sym) {
+    llvm::handleAllErrors(sym.takeError(), [](const llvm::ErrorInfoBase &e) {
+      llvm::errs() << "Symbol lookup failed: " << e.message() << "\n";
+    });
+    return 1;
+  }
+  auto *fn = reinterpret_cast<void (*)(void *, void *, void *)>(*sym);
+  fn(&result, &x_desc, &w_desc);
+
+  llvm::outs() << "result[0][0][0] = " << result.data[0] << " (expected 1.0)\n";
+  llvm::outs() << "result[0][0][1] = " << result.data[1] << " (expected 1.0)\n";
+  free(result.basePtr);
+  return 0;
+}
+
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    llvm::errs() << "Usage: remora-compiler <input.mlir>\n";
+  if (argc < 3) {
+    llvm::errs() << "Usage: remora-compiler <input.mlir> --kernel=<elementwise|projection>\n";
+    return 1;
+  }
+
+  llvm::StringRef kernel;
+  bool debug = false;
+  for (int i = 2; i < argc; i++) {
+    llvm::StringRef arg(argv[i]);
+    if (arg.starts_with("--kernel="))
+      kernel = arg.drop_front(9);
+    else if (arg == "--mlir-print-ir-after-all")
+      debug = true;
+  }
+  if (kernel != "elementwise" && kernel != "projection") {
+    llvm::errs() << "Unknown kernel '" << kernel << "'. Use --kernel=elementwise or --kernel=projection\n";
     return 1;
   }
 
@@ -96,7 +150,6 @@ int main(int argc, char **argv) {
   /// default it will implicitly create a thread pool.
   mlir::MLIRContext ctx(registry);
 
-  bool debug = argc > 2 && llvm::StringRef(argv[2]) == "--mlir-print-ir-after-all";
   if (debug) ctx.disableMultithreading(); // required for `enableIRPrinting`
 
   /// https://github.com/llvm/llvm-project/blob/f46a5153850c1303d687233d4adf699b01041da8/mlir/include/mlir/IR/OwningOpRef.h#L29
@@ -152,13 +205,16 @@ int main(int argc, char **argv) {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
 
-  auto maybeEngine = mlir::ExecutionEngine::create(*module);
-  if (!maybeEngine) {
-    llvm::handleAllErrors(maybeEngine.takeError(), [](const llvm::ErrorInfoBase &e) {
+  auto engineOrErr = mlir::ExecutionEngine::create(*module);
+  if (!engineOrErr) {
+    llvm::handleAllErrors(engineOrErr.takeError(), [](const llvm::ErrorInfoBase &e) {
       llvm::errs() << "Failed to create ExecutionEngine: " << e.message() << "\n";
     });
     return 1;
   }
+  auto &engine = *engineOrErr;
 
-  return runElementwise(*maybeEngine.get());
+  if (kernel == "projection")
+    return runProjection(*engine.get());
+  return runElementwise(*engine.get());
 }
