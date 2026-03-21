@@ -60,4 +60,5 @@ target_link_libraries(remora-compiler PRIVATE
   VhloOps
   VhloTypes
   ChloOps
+  MLIRExecutionEngine
 )
