@@ -1,6 +1,6 @@
 # remora
 
-[Remora](https://scryfall.com/card/ice/87/mystic-remora) is an MLIR compiler that lowers StableHLO programs to heterogeneous GPU targets.
+[Remora](https://scryfall.com/card/ice/87/mystic-remora)
 
 ## Directory structure
 
