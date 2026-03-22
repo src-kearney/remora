@@ -1,0 +1,88 @@
+{
+  "slug": "signal-to-noise",
+  "title": "Signal-to-Noise",
+  "date": "2025-07-15",
+  "tags": [
+    "AI",
+    "Machine Learning",
+    "RecSys"
+  ],
+  "chunks": [
+    {
+      "type": "text",
+      "content": [
+        "What would you consider to be the signal-to-noise ratio of this video, which is livestreaming from mp4 to ascii? You might be able to identify a field of flowers blowing in the wind, intermittent cuts of the clapboard, or if you watch long enough, a purple convertible. But you must sift through the noise to find the signal that is the original movie [(source)](https://archive.org/details/200647_American_Choice_Outtakes_R6).",
+        "In machine-learning and statistical modeling, \"signal\" is the component of your data that carries **predictive information** about the quantity you're trying to estimate or classify.",
+        "Models take as input many features. Some carry more signal than others, and weighting them improves the overall ratio of signal to noise. But what is seen as high \"signal\" is in the eye of the beholder. For instance, if I were a beholder, I would say:"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "> The type of recommendation with the highest signal-to-noise ratio is someone I know well telling me \"you should watch this, I think you'd like it\"."
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "```\n+--------------------------------+    +--------------------------------+\n|  Friend's Perception of Me     |───►|    Friend's Knowledge of       |\n|                                |    |          the Content           |\n+--------------------------------+    |                                |\n      ▲                               +--------------------------------+\n      │                                             │\n      │                                             ▼\n+--------------------------------+    +--------------------------------+\n|          My Feedback           |◄───|         Recommendation         |\n|                                |    | (“Go in blind—you’ll love it”) |\n+--------------------------------+    +--------------------------------+\n```"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "Recommendation systems today simulate these core mechanisms. The system percieves me as a user, models the content, surfaces tailored recommendations, and retrains on my feedback. I try to be intentional with my feedback, to keep the [good movies](https://en.wikipedia.org/wiki/Soul_(2020_film)) coming.",
+        "But what happens when the system learns from signals [I don't even know I'm sending](https://en.wikipedia.org/wiki/Dwell_time_(information_retrieval))?"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "```\n┌──────────────────┐      ┌───────────────┐      ┌────────────────────┐\n│  user behavior   │ ───► │     model     │ ───► │ company objective  │\n├──────────────────┤      ├───────────────┤      ├────────────────────┤\n│  likes           │      │  rec_v4.2     │      │  watch time        │\n│  pauses          │      │  weights      │      │  ad revenue        │\n│  scrolls         │      │  features     │      │  engagement        │\n│  comments        │      │               │      │  retention         │\n└──────────────────┘      └───────────────┘      └────────────────────┘\n```"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "Platforms decide what your behavior means. Every like, pause, scroll, or comment becomes a feature or training data. But the system, not the user, decides which of these signals actually matter.",
+        "Recommendation systems that power YouTube, TikTok, Netflix, and Spotify, shape the information we consume. The food we eat shapes our physical health. That's why we have Nutrition Facts."
+      ]
+    },
+    {
+      "type": "image",
+      "imageUrl": "/content/nutrition-facts.jpg",
+      "alt": "Nutrition facts label"
+    },
+    {
+      "type": "text",
+      "content": [
+        "Nutrition Facts labels only became mandatory in the 1990s, after decades of rising health concerns and consumer pressure. Before that, food companies could say almost anything, and you had no standardized way to know what you were eating.",
+        "We can draw parallels from pre-1990s nutrition to many our most beloved machine learning products. Recommendation systems today are both massively impactful and almost entirely opaque. We rarely know all of the incentives and optimization targets behind the feeds we consume. Perhaps individual pieces of content, or models, or algorithms, should require **Nutrition Facts**.",
+        "-----",
+        "[\"Show me less of this\"](https://support.google.com/youtube/answer/6342839?hl=en&co=GENIE.Platform%3DAndroid) is a common feature in many recommendation systems for controlling your feed, but it's sparingly clicked by users. Bluesky is doing [interesting work](https://bsky.social/about/blog/3-30-2023-algorithmic-choice) in the space of transparent and decentralized recommendation systems. Infrastructure companies which previously catered to application developers are extending their platforms to MLEs by [providing UIs](https://www.datadoghq.com/blog/ml-model-monitoring-in-production-best-practices/) for debugging and understanding model behaviors.",
+        "Despite these advances, recommendation systems remain opaque. Engineers can trace signals, tweak hyperparameters, and watch drift in dashboards, but this level of control is rarely surfaced to the end user.",
+        "I often hear the argument that users cannot understand the technical intricacies of machine learning. I disagree for two reasons.",
+        "First, we underestimate people's ability to learn. A friend of mine who doesn't work in tech recently built a multi-agent simulator to test a Magic: The Gathering deck.",
+        "Second, people cannot understand systems we intentionally hide behind opaque interfaces. If anything, it is our responsibility as experts to explain the technology we have built."
+      ]
+    },
+    {
+      "type": "side_by_side_code",
+      "left": {
+        "label": "user sees",
+        "content": "[ Recommended Post ]\n\n[ Like ]\n[ Dislike ]\n[ Share ]\n[ Comment ]\n\n[ Not interested ]"
+      },
+      "right": {
+        "label": "engineer sees",
+        "content": "model:      rec_transformer_v4.2\nuser_id:    0x4f2a  segment: 14-B\nab_variant: treatment_3\n\nfeature weights\n  recency_score       0.82  ████░░\n  engagement_hist     0.71  ███░░░\n  topic_affinity      0.94  █████░\n  collab_filter       0.68  ███░░░\n  watch_completion    0.55  ██░░░░\n  sentiment_signal    0.47  ██░░░░\n  social_graph_sim    0.39  █░░░░░\n\npredictions\n  ctr              4.3%\n  watch_time       847s\n  p(share)         0.021\n  p(long_session)  0.68\n\nhealth\n  embedding_drift  +0.12  WARNING\n  signal / noise    0.61  degrading\n  feature_coverage  94.2%"
+      }
+    },
+    {
+      "type": "text",
+      "content": [
+        "When a user explicitly tells a system what they want, that shouldn't be treated as just another feature alongside dwell time or scroll velocity. In opaque systems built on inferred behavioral signals, it may be the clearest signal the model will ever receive.",
+        "They are the experts in their own taste, after all."
+      ]
+    }
+  ]
+}

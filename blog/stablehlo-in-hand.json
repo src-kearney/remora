@@ -1,0 +1,179 @@
+{
+  "slug": "stablehlo-in-hand",
+  "title": "StableHLO in Hand",
+  "date": "2026-03-08",
+  "tags": [
+    "MLIR",
+    "StableHLO",
+    "Compilers"
+  ],
+  "chunks": [
+    {
+      "type": "text",
+      "content": [
+        "Alright. With the MLIR in hand, it's time to convert our MLIR to MLIR.",
+        "Yes, you read that right. Our starting point, StableHLO, is a high-level dialect of MLIR, and now we want to take it one step closer to the GPU. One step lower brings us to the Linalg MLIR dialect. Where StableHLO describes `what` our JAX wants to accomplish, Linalg describes `how` to accomplish it.",
+        "StableHLO ships a build script that compiles MLIR from a known-good LLVM commit. The commit hash lives in `build_tools/llvm_version.txt`.",
+        "```bash\ngit clone https://github.com/openxla/stablehlo.git\ncd stablehlo\ncat build_tools/llvm_version.txt\n# 1053047a4be7d1fece3adaf5e7597f838058c947\n\ngit clone https://github.com/llvm/llvm-project\ncd llvm-project && git checkout 1053047a4be7d1fece3adaf5e7597f838058c947\ncd ../stablehlo\n\nsh build_tools/build_mlir.sh ../llvm-project ../llvm-build\n```"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "4,669 compilation units later, MLIR is built. Now configure and build `stablehlo-opt` against it:",
+        "```bash\ncmake -GNinja -B build \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DMLIR_DIR=../llvm-build/lib/cmake/mlir \\\n  -DLLVM_ENABLE_ASSERTIONS=ON\n\ncmake --build build --target stablehlo-opt\n# [163/163] Linking CXX executable bin/stablehlo-opt\n```"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "With `stablehlo-opt` built, I pointed it at [the MLIR file](https://github.com/src-kearney/stablehlo-gpu/blob/main/attention-jax-export/simple_attention_elementwise.mlir) from [From JAX to Metal](/book/from-jax-to-metal): a bias add followed by ReLU.",
+        "```bash\n./build/bin/stablehlo-opt simple_attention_elementwise.mlir\n```",
+        "```mlir\nmodule @jit_elementwise {\n  func.func public @main(%arg0: tensor<1x512x768xf32>, %arg1: tensor<768xf32>)\n      -> tensor<1x512x768xf32> {\n    %0 = stablehlo.broadcast_in_dim %arg1, dims = [2]\n             : (tensor<768xf32>) -> tensor<1x1x768xf32>\n    %1 = stablehlo.broadcast_in_dim %0, dims = [0, 1, 2]\n             : (tensor<1x1x768xf32>) -> tensor<1x512x768xf32>\n    %2 = stablehlo.add %arg0, %1 : tensor<1x512x768xf32>\n    %3 = call @relu(%2) : (tensor<1x512x768xf32>) -> tensor<1x512x768xf32>\n    return %3 : tensor<1x512x768xf32>\n  }\n  func.func private @relu(%arg0: tensor<1x512x768xf32>) -> tensor<1x512x768xf32> {\n    %cst = stablehlo.constant dense<0.000000e+00> : tensor<f32>\n    %0 = stablehlo.broadcast_in_dim %cst, dims = []\n             : (tensor<f32>) -> tensor<1x512x768xf32>\n    %1 = stablehlo.maximum %arg0, %0 : tensor<1x512x768xf32>\n    return %1 : tensor<1x512x768xf32>\n  }\n}\n```"
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "The [previous post](/book/from-jax-to-metal) noted that those five elementwise ops (broadcast, broadcast, add, broadcast, max) should be fused into a single kernel. Hoping to collapse the chain, I ran `--canonicalize`, a pass that only applies rewrites which are safe to run anywhere: constant folding, algebraic simplification, nothing that changes program size or surprises downstream passes, only to find the exact same output:",
+        "```bash\ndiff <(./build/bin/stablehlo-opt simple_attention_elementwise.mlir) \\\n     <(./build/bin/stablehlo-opt simple_attention_elementwise.mlir --canonicalize)\n# (no output)\n```",
+        "So, why doesn't this live in `--canonicalize`? Turns out, there's an actual reason. Google's on-device ML team filed an RFC pushing back on MHLO canonicalizers being too aggressive: folding splat broadcasts is fine for server inference, but it increases model size on mobile and hinders removing unnecessary broadcast ops downstream. The [discussion is public](https://groups.google.com/a/openxla.org/g/openxla-discuss/c/VGBIS0kgPKY?pli=1). MLIR's own canonicalization docs reinforce the principle: repeated applications of patterns should converge, and size-affecting transformations can violate that.",
+        "The split was deliberate. Correctness-preserving simplifications go in canonicalize. Size-affecting optimizations go in the aggressive passes. The mobile and quantization teams at Google forced that distinction because server-side assumptions were burning them on device.",
+        "The fold does exist, though. `--stablehlo-aggressive-simplification` has an explicit rule for it:",
+        "```\nbroadcast_in_dim(broadcast_in_dim(X, [dimsA...]), [dimsB...])\n  -> broadcast_in_dim(X, merge(dimsA, dimsB))\n```",
+        "Through folding, we collapse two ops into one - cleaner IR, same semantics. So we want to fold these, right? Seems like a no-brainer.",
+        "Folding two broadcasts into one means one fewer op. But the remaining ops still each write a tensor to GPU memory and read it back. _Fusion_, rather than _folding_, eliminates those round-trips. By running all three ops in one kernel, intermediate values never leave the registers. To accomplish fusion, we must lower to Linalg.",
+        "```bash\n./build/bin/stablehlo-opt --help | grep linalg\n```",
+        "```\n      --convert-elementwise-to-linalg                        -   Convert ElementwiseMappable ops to linalg\n      --convert-linalg-to-affine-loops                       -   Lower the operations from the linalg dialect into affine loops\n      --convert-linalg-to-loops                              -   Lower the operations from the linalg dialect into loops\n      --convert-linalg-to-parallel-loops                     -   Lower the operations from the linalg dialect into parallel loops\n      --convert-linalg-to-std                                -   Convert the operations from the linalg dialect into the Standard dialect\n      --convert-tensor-to-linalg                             -   Convert some Tensor dialect ops to Linalg dialect\n      --linalg-block-pack-matmul                             -   Convert linalg matmul ops to block layout and back\n      --linalg-fold-into-elementwise                         -   Fold transpose ops into elementwise\n      --linalg-fold-unit-extent-dims                         -   Remove unit-extent dimension in Linalg ops on tensors\n      --linalg-fuse-elementwise-ops                          -   Fuse elementwise operations on tensors\n      --linalg-generalize-named-ops                          -   Convert named ops into generic ops\n      --linalg-inline-scalar-operands                        -   Inline scalar operands into linalg generic ops\n      --linalg-morph-ops                                     -   Convert linalg ops between forms\n      --linalg-specialize-generic-ops                        -   Convert generic ops back to named ops\n      --stablehlo-legalize-to-linalg                         -   Legalize StableHLO to LinAlg\n      --tosa-to-linalg                                       -   Lower TOSA to LinAlg on tensors\n      --tosa-to-linalg-named                                 -   Lower TOSA to LinAlg named operations\n      --tosa-to-linalg-pipeline                              -   The default pipeline for converting TOSA operators to linalg\n```",
+        "Fortunately, `--stablehlo-legalize-to-linalg` is self-describing. It rewrites `stablehlo.*` ops into `linalg.*` ops the Linalg dialect considers legal. IREE uses the same conversion. Legalization makes the loops visible. You can't fuse what you can't see.",
+        "```bash\n./build/bin/stablehlo-opt simple_attention_elementwise.mlir \\\n  --stablehlo-legalize-to-linalg\n```"
+      ]
+    },
+    {
+      "type": "annotated_code",
+      "language": "mlir",
+      "code": "#map  = affine_map<(d0, d1, d2) -> (d2)>\n#map1 = affine_map<(d0, d1, d2) -> (d0, d1, d2)>\n#map2 = affine_map<(d0, d1, d2) -> (d0, 0, d2)>\n#map3 = affine_map<(d0, d1, d2) -> ()>\nmodule @jit_elementwise {\n  func.func public @main(%arg0: tensor<1x512x768xf32>, %arg1: tensor<768xf32>)\n      -> tensor<1x512x768xf32> {\n    %0 = tensor.empty() : tensor<1x1x768xf32>\n    %1 = linalg.generic {indexing_maps = [#map, #map1],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg1 : tensor<768xf32>) outs(%0 : tensor<1x1x768xf32>) {\n    ^bb0(%in: f32, %out: f32):\n      linalg.yield %in : f32\n    } -> tensor<1x1x768xf32>\n    %2 = tensor.empty() : tensor<1x512x768xf32>\n    %3 = linalg.generic {indexing_maps = [#map2, #map1],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%1 : tensor<1x1x768xf32>) outs(%2 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %out: f32):\n      linalg.yield %in : f32\n    } -> tensor<1x512x768xf32>\n    %4 = tensor.empty() : tensor<1x512x768xf32>\n    %5 = linalg.generic {indexing_maps = [#map1, #map1, #map1],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg0, %3 : tensor<1x512x768xf32>, tensor<1x512x768xf32>)\n             outs(%4 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %in_0: f32, %out: f32):\n      %7 = arith.addf %in, %in_0 : f32\n      linalg.yield %7 : f32\n    } -> tensor<1x512x768xf32>\n    %6 = call @relu(%5) : (tensor<1x512x768xf32>) -> tensor<1x512x768xf32>\n    return %6 : tensor<1x512x768xf32>\n  }\n  func.func private @relu(%arg0: tensor<1x512x768xf32>) -> tensor<1x512x768xf32> {\n    %cst = arith.constant dense<0.000000e+00> : tensor<f32>\n    %0 = tensor.empty() : tensor<1x512x768xf32>\n    %1 = linalg.generic {indexing_maps = [#map3, #map1],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%cst : tensor<f32>) outs(%0 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %out: f32):\n      linalg.yield %in : f32\n    } -> tensor<1x512x768xf32>\n    %2 = tensor.empty() : tensor<1x512x768xf32>\n    %3 = linalg.generic {indexing_maps = [#map1, #map1, #map1],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg0, %1 : tensor<1x512x768xf32>, tensor<1x512x768xf32>)\n             outs(%2 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %in_0: f32, %out: f32):\n      %4 = arith.maximumf %in, %in_0 : f32\n      linalg.yield %4 : f32\n    } -> tensor<1x512x768xf32>\n    return %3 : tensor<1x512x768xf32>\n  }\n}",
+      "annotations": [
+        {
+          "term": "-> (d2)",
+          "definition": "Reads the 1D bias at only the last dimension. d0 and d1 are not indexed -- their values are ignored. This is how broadcasting becomes explicit loop indexing.",
+          "why": "What Python made invisible, Linalg makes explicit: the bias is accessed at just one index, and the loop nest handles repetition."
+        },
+        {
+          "term": "(d0, 0, d2)",
+          "definition": "d1 is pinned to 0 regardless of the iterator value. The loop still visits all 512 positions in d1, but this input always reads from row 0.",
+          "why": "The second broadcast, spelled out as an indexing rule instead of an op."
+        },
+        {
+          "term": "-> ()",
+          "definition": "Empty map: no indices. Returns the same scalar value for every iteration of the 3D loop nest.",
+          "why": "stablehlo.constant lowers to this: a single captured value read identically at every element position."
+        },
+        {
+          "term": "tensor.empty()",
+          "occurrence": 1,
+          "definition": "Allocates a new output buffer for this op. Five ops across @main and @relu = five allocations = five passes over 393,216 floats.",
+          "why": "This is the cost the fusion pass eliminates."
+        },
+        {
+          "term": "iterator_types",
+          "occurrence": 1,
+          "definition": "All three loop dimensions are parallel -- no loop-carried dependencies, every output element computed independently.",
+          "why": "Parallel iterators are also the condition for fusion. The pass can only merge linalg.generic ops whose iterators are all parallel."
+        },
+        {
+          "term": "^bb0",
+          "occurrence": 1,
+          "definition": "The per-element scalar body. Code here runs once per output element.",
+          "why": "After fusion, multiple bb0 blocks merge into one, eliminating the intermediate buffers between them."
+        },
+        {
+          "term": "arith.addf",
+          "definition": "Float add in the arith dialect. stablehlo.add crossed a dialect boundary automatically during --stablehlo-legalize-to-linalg."
+        },
+        {
+          "term": "arith.constant",
+          "definition": "stablehlo.constant became arith.constant when crossing into Linalg. Dialect boundaries are crossed automatically by legalization passes."
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "An observant reader would have noticed `--linalg-fuse-elementwise-ops` in my above `stablehlo-opt --help` command. Let's give it a shot, and cross our fingers we see one single, beautiful, fused op.",
+        "```bash\n./build/bin/stablehlo-opt simple_attention_elementwise.mlir \\\n  --stablehlo-legalize-to-linalg \\\n  --linalg-fuse-elementwise-ops\n```"
+      ]
+    },
+    {
+      "type": "annotated_code",
+      "language": "mlir",
+      "code": "#map  = affine_map<(d0, d1, d2) -> (d0, d1, d2)>\n#map1 = affine_map<(d0, d1, d2) -> (d2)>\nmodule @jit_elementwise {\n  func.func public @main(%arg0: tensor<1x512x768xf32>, %arg1: tensor<768xf32>)\n      -> tensor<1x512x768xf32> {\n    %0 = tensor.empty() : tensor<1x512x768xf32>\n    %1 = linalg.generic {indexing_maps = [#map, #map1, #map],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg0, %arg1 : tensor<1x512x768xf32>, tensor<768xf32>)\n             outs(%0 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %in_0: f32, %out: f32):\n      %3 = arith.addf %in, %in_0 : f32\n      linalg.yield %3 : f32\n    } -> tensor<1x512x768xf32>\n    %2 = call @relu(%1) : (tensor<1x512x768xf32>) -> tensor<1x512x768xf32>\n    return %2 : tensor<1x512x768xf32>\n  }\n  func.func private @relu(%arg0: tensor<1x512x768xf32>) -> tensor<1x512x768xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = tensor.empty() : tensor<1x512x768xf32>\n    %1 = linalg.generic {indexing_maps = [#map, #map],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg0 : tensor<1x512x768xf32>) outs(%0 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %out: f32):\n      %2 = arith.maximumf %in, %cst : f32\n      linalg.yield %2 : f32\n    } -> tensor<1x512x768xf32>\n    return %1 : tensor<1x512x768xf32>\n  }\n}",
+      "annotations": [
+        {
+          "term": "[#map, #map1, #map]",
+          "definition": "Three operands: 3D input, 1D bias, 3D output. The two broadcast ops were absorbed directly into the indexing maps. No intermediate broadcast buffers needed.",
+          "why": "Broadcasting is just an indexing pattern. The fusion pass recognized this and folded the broadcast ops into the combined loop's access maps."
+        },
+        {
+          "term": "tensor.empty()",
+          "occurrence": 1,
+          "definition": "One allocation in @main, down from three. The two intermediate broadcast buffers are gone."
+        },
+        {
+          "term": "arith.maximumf %in, %cst",
+          "definition": "ReLU against a scalar f32 constant, not a broadcasted zero tensor. The constant was hoisted out of the loop and the zero-tensor broadcast eliminated.",
+          "why": "The fusion pass also simplified @relu internally, removing the zero-tensor materialization entirely."
+        },
+        {
+          "term": "call @relu",
+          "definition": "Function boundaries are opaque to the fusion pass. The add and ReLU live in separate function scopes, so the pass cannot see them as a producer-consumer pair. Running --inline first removes this boundary.",
+          "why": "The fix is to inline before fusing."
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "Progress, but not as much dopamine as I was hoping for. The broadcasts collapsed, but the ReLU still lives as a separate op. It turns out, the fusion pass only sees ops within the same function. The add and ReLU lived in separate scopes, so it had no way to know they were a producer-consumer pair.",
+        "Adding `--inline` first copies the ReLU body into @main. Now, the fusion pass can see them together:",
+        "```bash\n./build/bin/stablehlo-opt simple_attention_elementwise.mlir \\\n  --stablehlo-legalize-to-linalg \\\n  --inline \\\n  --linalg-fuse-elementwise-ops\n```"
+      ]
+    },
+    {
+      "type": "annotated_code",
+      "language": "mlir",
+      "code": "#map  = affine_map<(d0, d1, d2) -> (d0, d1, d2)>\n#map1 = affine_map<(d0, d1, d2) -> (d2)>\nmodule @jit_elementwise {\n  func.func public @main(%arg0: tensor<1x512x768xf32>, %arg1: tensor<768xf32>)\n      -> tensor<1x512x768xf32> {\n    %cst = arith.constant 0.000000e+00 : f32\n    %0 = tensor.empty() : tensor<1x512x768xf32>\n    %1 = linalg.generic {indexing_maps = [#map, #map1, #map],\n                         iterator_types = [\"parallel\", \"parallel\", \"parallel\"]}\n             ins(%arg0, %arg1 : tensor<1x512x768xf32>, tensor<768xf32>)\n             outs(%0 : tensor<1x512x768xf32>) {\n    ^bb0(%in: f32, %in_0: f32, %out: f32):\n      %2 = arith.addf %in, %in_0 : f32\n      %3 = arith.maximumf %2, %cst : f32\n      linalg.yield %3 : f32\n    } -> tensor<1x512x768xf32>\n    return %1 : tensor<1x512x768xf32>\n  }\n}",
+      "annotations": [
+        {
+          "term": "tensor.empty()",
+          "definition": "One allocation. Down from 5 across the unfused version."
+        },
+        {
+          "term": "[#map, #map1, #map]",
+          "definition": "3D input, 1D bias (broadcast via index map), 3D output. All 5 StableHLO ops collapsed into a single loop nest.",
+          "why": "The 1D bias is accessed by #map1 = (d0,d1,d2) -> (d2), broadcasting across d0 and d1 for free via the indexing map."
+        },
+        {
+          "term": "arith.addf %in, %in_0",
+          "definition": "%in is the input element, %in_0 is the bias value at position d2. The broadcast was absorbed into how %in_0 is indexed, not as a separate op."
+        },
+        {
+          "term": "arith.maximumf %2, %cst",
+          "definition": "ReLU inline: clamps the add result to 0 in the same loop body. The relu function is gone -- it was inlined, then fused.",
+          "why": "--inline eliminated the function boundary. --linalg-fuse-elementwise-ops then saw the add and relu as a direct producer-consumer pair and merged them."
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "content": [
+        "Three off-the-shelf passes: `--stablehlo-legalize-to-linalg` makes ops fusible, `--inline` removes function boundaries, `--linalg-fuse-elementwise-ops` merges adjacent parallel loops.",
+        "So, now what? Before committing to this pipeline, it's worth checking the closest thing we have to an answer sheet - [IREE](https://github.com/iree-org/iree/blob/1f3f80891cfe3202b737ae1f12a9d3a803ed1c9f/compiler/src/iree/compiler/DispatchCreation/ElementwiseOpFusion.cpp). Turns out, IREE's `ElementwiseOpFusionPass` calls `linalg::populateElementwiseOpsFusionPatterns` - the same function `--linalg-fuse-elementwise-ops` wraps. The difference is what it passes in:",
+        "```cpp\nlinalg::ControlFusionFn fuseElementwiseOpsControlFn =\n    [&](OpOperand *fusedOperand) {\n        // Don't fuse if it would exceed backend binding limits\n        if (operands.size() >= kIreeMaxOperandCount) return false;\n        return areFusableAsElementwiseOps(context, fusedOperand, options);\n    };\n\nlinalg::populateElementwiseOpsFusionPatterns(linalgFusionPatterns,\n                                             fuseElementwiseOpsControlFn);\n```",
+        "My pipeline passes nothing. It fuses anything legally fusible. IREE gates every fusion decision against hardware constraints: how many buffers a GPU kernel can accept, whether this crosses a dispatch region boundary, whether this is a broadcast consumer. The mechanism is trivial, but the policy is everything.",
+        "---",
+        "The off-the-shelf passes got us from 5 ops to 1 loop. But they made every decision for us: tiling, memory layout, thread mapping, all implicit. In the next post, we move into C++ and wire the same pipeline through a PassManager. The explicit decisions come after that."
+      ]
+    }
+  ]
+}
