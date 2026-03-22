@@ -7,20 +7,23 @@
 ```
 remora/
 ├── .env.example          # Template for local build paths (copy to .env)
-├── jax/                  # JAX model definitions (export source)
+├── jax/                  # JAX model definitions and verification scripts
 ├── mlir/
 │   ├── stablehlo/        # StableHLO IR exported from JAX
 │   └── linalg/           # Linalg IR lowered from StableHLO
 ├── compiler/
-│   ├── main.cpp          # MLIR/StableHLO parser + pass pipeline entry point
+│   ├── main.cpp          # Pass pipeline, JIT harness, kernel invocation
 │   ├── CMakeLists.txt    # Build config (reads MLIR_DIR, STABLEHLO_ROOT/BUILD from .env)
 │   └── build/            # CMake build output (gitignored)
+├── md/                   # Design docs and quiz
 └── scripts/
-    ├── bootstrap.sh      # Build MLIR + stablehlo-opt from source
-    ├── build.sh          # Build remora-compiler (requires .env)
-    ├── attention_elementwise_lower_to_linalg.sh
-    ├── attention_projection_lowered_to_linalg.sh
-    └── elementwise-explore.sh
+    ├── bootstrap.sh                              # Build MLIR + stablehlo-opt from source
+    ├── build.sh                                  # Build remora-compiler (requires .env)
+    ├── run_elementwise.sh                        # JIT-run elementwise kernel, print output
+    ├── run_projection.sh                         # JIT-run projection kernel, print output
+    ├── attention_elementwise_lower_to_linalg.sh  # Lower elementwise StableHLO → Linalg
+    ├── attention_projection_lowered_to_linalg.sh # Lower projection StableHLO → Linalg
+    └── elementwise-explore.sh                    # Step through lowering passes interactively
 ```
 
 ## Prerequisites
@@ -79,30 +82,54 @@ This sources `.env`, runs CMake, and produces `compiler/build/remora-compiler`.
 
 ## Usage
 
-### Run remora-compiler
+### Run the JIT kernels
 
-`remora-compiler` parses a StableHLO or Linalg MLIR file, registers all dialects and passes, and prints the parsed module to stdout. It is the entry point for the pass pipeline as lowering passes are added.
+`remora-compiler` lowers a StableHLO file through the full pass pipeline to LLVM dialect, JIT-compiles it via LLVM ORC, and executes it on CPU. Use `--kernel` to select the test harness matching the input file.
 
 ```bash
-compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir
+compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise
+compiler/build/remora-compiler mlir/stablehlo/simple_attention_projection.mlir  --kernel=projection
 ```
 
+Or via the wrapper scripts:
+
+```bash
+sh scripts/run_elementwise.sh   # relu(x + bias), expects 0.5
+sh scripts/run_projection.sh    # matmul(x, w),   expects ~1.0
+```
+
+Pass `--mlir-print-ir-after-all` to dump IR after each lowering pass:
+
+```bash
+compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise --mlir-print-ir-after-all
+```
+
+### Validate against JAX
+
+The `jax/verify_*.py` scripts run the same kernels in JAX with identical inputs and print output in the same format. Both should produce bit-identical results.
+
+```bash
+diff <(sh scripts/run_elementwise.sh) <(jax/.venv/bin/python jax/verify_elementwise.py)
+diff <(sh scripts/run_projection.sh)  <(jax/.venv/bin/python jax/verify_projection.py)
+```
 
 ### Lower StableHLO → Linalg
+
+These scripts use `stablehlo-opt` to lower to Linalg and write the result to `mlir/linalg/`:
 
 ```bash
 scripts/attention_elementwise_lower_to_linalg.sh
 scripts/attention_projection_lowered_to_linalg.sh
 ```
 
-Outputs are written to `mlir/linalg/`. To see the full transformation — StableHLO broadcast/add/relu collapsed into a single fused `linalg.generic` — diff the input against the output:
+To see what the fusion pass does — StableHLO broadcast/add/relu collapsed into a single fused `linalg.generic` — diff the input against the output:
 
 ```bash
-diff <(compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir) \
+diff mlir/stablehlo/simple_attention_elementwise.mlir \
      mlir/linalg/attention_elementwise_lowered_to_linalg.mlir
 ```
 
-These scripts use `stablehlo-opt` directly; set `STABLEHLO_OPT` in your environment if it is not on your PATH:
+Set `STABLEHLO_OPT` if `stablehlo-opt` is not on your PATH:
 
 ```bash
 export STABLEHLO_OPT=/path/to/build-deps/stablehlo/build/bin/stablehlo-opt
@@ -114,7 +141,7 @@ export STABLEHLO_OPT=/path/to/build-deps/stablehlo/build/bin/stablehlo-opt
 scripts/elementwise-explore.sh
 ```
 
-Runs the elementwise attention file through several progressive lowering steps and prints each result to stdout, useful for understanding what each pass does.
+Runs the elementwise file through several progressive lowering steps and prints each result to stdout.
 
 ### (Optional) Export fresh StableHLO from JAX
 
@@ -125,4 +152,4 @@ python simple_attention_elementwise.py > ../mlir/stablehlo/simple_attention_elem
 python simple_attention_projection.py > ../mlir/stablehlo/simple_attention_projection.mlir
 ```
 
-Both scripts print the exported StableHLO module to stdout; redirect to overwrite the checked-in files.
+Both scripts print the exported StableHLO module to stdout.
