@@ -63,7 +63,7 @@
         "Despite these advances, recommendation systems remain opaque. Engineers can trace signals, tweak hyperparameters, and watch drift in dashboards, but this level of control is rarely surfaced to the end user.",
         "I often hear the argument that users cannot understand the technical intricacies of machine learning. I disagree for two reasons.",
         "First, we underestimate people's ability to learn.",
-        "Second, it doesn't make it easier to understand systems when their hidden behind interfaces. If anything, it is our responsibility as experts to be able to explain the technology we have built."
+        "Second, it doesn't make it any easier to understand systems when important details are hidden away."
       ]
     },
     {
