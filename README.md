@@ -18,7 +18,7 @@ remora/
 ├── md/                   # Design docs and quiz
 └── scripts/
     ├── bootstrap.sh                              # Build MLIR + stablehlo-opt from source
-    ├── build.sh                                  # Build remora-compiler (requires .env)
+    ├── build.sh                                  # Build remora (requires .env)
     ├── run_elementwise.sh                        # JIT-run elementwise kernel, print output
     ├── run_projection.sh                         # JIT-run projection kernel, print output
     ├── attention_elementwise_lower_to_linalg.sh  # Lower elementwise StableHLO → Linalg
@@ -72,23 +72,23 @@ STABLEHLO_BUILD=/path/to/build-deps/stablehlo/build
 
 If you used the default `build-deps/` location these will be `<repo-root>/build-deps/...`.
 
-### 3. Build remora-compiler
+### 3. Build remora
 
 ```bash
 sh scripts/build.sh
 ```
 
-This sources `.env`, runs CMake, and produces `compiler/build/remora-compiler`.
+This sources `.env`, runs CMake, and produces `compiler/build/remora`.
 
 ## Usage
 
 ### Run the JIT kernels
 
-`remora-compiler` lowers a StableHLO file through the full pass pipeline to LLVM dialect, JIT-compiles it via LLVM ORC, and executes it on CPU. Use `--kernel` to select the test harness matching the input file.
+`remora` lowers a StableHLO file through the full pass pipeline to LLVM dialect, JIT-compiles it via LLVM ORC, and executes it on CPU. Use `--kernel` to select the test harness matching the input file.
 
 ```bash
-compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise
-compiler/build/remora-compiler mlir/stablehlo/simple_attention_projection.mlir  --kernel=projection
+compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise
+compiler/build/remora mlir/stablehlo/simple_attention_projection.mlir  --kernel=projection
 ```
 
 Or via the wrapper scripts:
@@ -101,7 +101,7 @@ sh scripts/run_projection.sh    # matmul(x, w),   expects ~1.0
 Pass `--mlir-print-ir-after-all` to dump IR after each lowering pass:
 
 ```bash
-compiler/build/remora-compiler mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise --mlir-print-ir-after-all
+compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir --kernel=elementwise --mlir-print-ir-after-all
 ```
 
 ### Validate against JAX

@@ -14,9 +14,11 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Parse arguments
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build-deps}"
+NVPTX=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-dir) BUILD_DIR="$2"; shift 2 ;;
+    --nvptx) NVPTX=1; shift ;;
     *) echo "Unknown argument: $1"; exit 1 ;;
   esac
 done
@@ -48,6 +50,21 @@ echo "Checking out LLVM at $LLVM_COMMIT"
 cd llvm-project && git checkout "$LLVM_COMMIT" && cd ..
 
 sh stablehlo/build_tools/build_mlir.sh "$BUILD_DIR/llvm-project" "$BUILD_DIR/llvm-build"
+
+# build_mlir.sh hardcodes LLVM_TARGETS_TO_BUILD=host and LLVM_BUILD_TOOLS=OFF.
+# If --nvptx was requested, reconfigure to add NVPTX and enable the tools we need.
+if [ "$NVPTX" = "1" ]; then
+  echo "Reconfiguring LLVM build with NVPTX target..."
+  cmake -GNinja \
+    -S "$BUILD_DIR/llvm-project/llvm" \
+    -B "$BUILD_DIR/llvm-build" \
+    -DLLVM_TARGETS_TO_BUILD="host;NVPTX" \
+    -DMLIR_ENABLE_BINDINGS_PYTHON=OFF \
+    -DLLVM_EXTERNAL_PROJECTS="" \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DLLVM_BUILD_TOOLS=ON
+  cmake --build "$BUILD_DIR/llvm-build" --target mlir-opt mlir-translate llc
+fi
 
 cmake -GNinja -B stablehlo/build \
   -S stablehlo \
