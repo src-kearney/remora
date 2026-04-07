@@ -75,8 +75,14 @@ cmake -GNinja -B stablehlo/build \
 cmake --build stablehlo/build --target stablehlo-opt
 
 echo ""
-echo "Build complete. stablehlo-opt is at:"
-echo "  $BUILD_DIR/stablehlo/build/bin/stablehlo-opt"
+echo "Build complete. Add these to your .env:"
 echo ""
-echo "Set this in your environment:"
+echo "  MLIR_DIR=$BUILD_DIR/llvm-build/lib/cmake/mlir"
+echo "  STABLEHLO_ROOT=$BUILD_DIR/stablehlo"
+echo "  STABLEHLO_BUILD=$BUILD_DIR/stablehlo/build"
+if [ "$NVPTX" = "1" ]; then
+  echo "  LLVM_NVPTX_LIB_DIR=$BUILD_DIR/llvm-project/build/lib"
+fi
+echo ""
+echo "Optional (for explore scripts):"
 echo "  export STABLEHLO_OPT=$BUILD_DIR/stablehlo/build/bin/stablehlo-opt"
