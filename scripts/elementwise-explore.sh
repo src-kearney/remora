@@ -8,6 +8,8 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[ -f "$REPO_ROOT/.env" ] && . "$REPO_ROOT/.env"
+STABLEHLO_OPT="${STABLEHLO_OPT:-${STABLEHLO_BUILD:+$STABLEHLO_BUILD/bin/stablehlo-opt}}"
 STABLEHLO_OPT="${STABLEHLO_OPT:-stablehlo-opt}"
 MLIR_FILE="$REPO_ROOT/mlir/stablehlo/simple_attention_elementwise.mlir"
 
