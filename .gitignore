@@ -45,6 +45,9 @@ moe-compiler-plan.md
 # Build dependencies (produced by scripts/bootstrap.sh)
 build-deps/
 
+# Local machine-specific scripts
+scripts/update-deps.sh
+
 # Compiler build output
 compiler/build/
 compiler/build.log
@@ -54,6 +57,11 @@ compiler/build.log
 
 # macOS
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
 
 # Environment files
 .env
