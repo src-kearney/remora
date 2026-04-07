@@ -31,13 +31,19 @@ compiler/build/remora mlir/stablehlo/simple_attention_projection.mlir --test=pro
 scripts/bootstrap.sh
 ```
 
+Add `--nvptx` if you want `--emit-ptx` / `--run-gpu` support (adds NVPTX target and build tools; takes longer):
+
+```bash
+scripts/bootstrap.sh --nvptx
+```
+
 To use a custom build directory:
 
 ```bash
 scripts/bootstrap.sh --build-dir /path/to/build-deps
 ```
 
-Bootstrap prints the paths you need for the next step.
+Bootstrap prints the exact `.env` values you need for the next step.
 
 ### 2. Configure .env
 
@@ -66,7 +72,7 @@ Produces `compiler/build/remora`.
 
 ## Usage: MoE end-to-end
 
-### Step 1 — Export StableHLO from JAX
+### 1. Export StableHLO from JAX
 
 ```bash
 cd scripts/export
@@ -76,7 +82,7 @@ python simple_moe.py
 
 Writes `mlir/stablehlo/simple_moe.mlir` — a 2-expert SwiGLU MoE (T=8 tokens, D=32 hidden, E=2 experts, F=64 FFN dim).
 
-### Step 2 — CPU path
+### 2. CPU path
 
 Lower through StableHLO → Linalg → LLVM dialect, JIT-compile, and execute on CPU:
 
@@ -84,7 +90,7 @@ Lower through StableHLO → Linalg → LLVM dialect, JIT-compile, and execute on
 compiler/build/remora mlir/stablehlo/simple_moe.mlir --test=elementwise
 ```
 
-### Step 3 — GPU path: emit PTX
+### 3. GPU path: emit PTX
 
 Lower through the GPU pipeline and emit PTX for each kernel. Runs on CPU (no GPU required):
 
@@ -94,7 +100,7 @@ compiler/build/remora mlir/stablehlo/simple_moe.mlir --emit-ptx
 
 Emits one PTX blob per `gpu.module`. For the MoE this produces 17 kernels.
 
-### Step 4 — GPU path: run on device
+### 4. GPU path: run on device
 
 Requires a GPU and a build with CUDA toolkit present (`REMORA_CUDA` defined):
 
