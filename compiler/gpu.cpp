@@ -120,13 +120,48 @@ static int launchElementwiseOnGpu(CUmodule cuMod, const std::string &ptx) {
   CUDA_CHECK(cuMemcpyHtoD(d_x,    h_x.data(),    h_x.size()    * sizeof(float)));
   CUDA_CHECK(cuMemcpyHtoD(d_bias, h_bias.data(), h_bias.size() * sizeof(float)));
 
-  MemRefDesc<3> result_desc{d_result, d_result, 0, {N, T, D}, {T*D, D, 1}};
-  MemRefDesc<3> x_desc    {d_x,      d_x,      0, {N, T, D}, {T*D, D, 1}};
-  MemRefDesc<1> bias_desc {d_bias,   d_bias,   0, {D},        {1}};
-  void *params[] = {&result_desc, &x_desc, &bias_desc};
+  // gpu.func signature (from --mlir-print-ir-after-all):
+  //   %arg0: index          — affine_map stride constant (= 1)
+  //   %arg1: index          — affine_map offset constant (= 0)
+  //   %arg2: memref<1x512x768xf32, strided<[?,?,?], offset:?>>  — x (dynamic strides)
+  //   %arg3: memref<768xf32, strided<[?], offset:?>>            — bias (dynamic)
+  //   %arg4: f32            — 0.0 relu threshold
+  //   %arg5: memref<1x512x768xf32>                              — result (static strides)
+  //
+  // Each memref lowers to: [allocated, aligned, offset, sizes..., strides...]
+  //   rank 3 → 9 scalars, rank 1 → 5 scalars
+  // Total: 1 + 1 + 9 + 5 + 1 + 9 = 26 scalars
+
+  // arg0, arg1: affine map constants captured at kernel outlining time
+  int64_t idx_stride = 1, idx_offset = 0;
+
+  // arg2: x memref<1x512x768xf32, strided<[?,?,?], offset:?>>
+  uint64_t x_alloc = d_x, x_align = d_x;
+  int64_t  x_off = 0, x_s0 = N, x_s1 = T, x_s2 = D;
+  int64_t  x_st0 = T*D, x_st1 = D, x_st2 = 1;
+
+  // arg3: bias memref<768xf32, strided<[?], offset:?>>
+  uint64_t b_alloc = d_bias, b_align = d_bias;
+  int64_t  b_off = 0, b_s0 = D, b_st0 = 1;
+
+  // arg4: f32 relu threshold
+  float zero = 0.0f;
+
+  // arg5: result memref<1x512x768xf32> (static layout)
+  uint64_t r_alloc = d_result, r_align = d_result;
+  int64_t  r_off = 0, r_s0 = N, r_s1 = T, r_s2 = D;
+  int64_t  r_st0 = T*D, r_st1 = D, r_st2 = 1;
+
+  void *params[] = {
+    &idx_stride, &idx_offset,                                                  // arg0, arg1
+    &x_alloc, &x_align, &x_off, &x_s0, &x_s1, &x_s2, &x_st0, &x_st1, &x_st2, // arg2
+    &b_alloc, &b_align, &b_off, &b_s0, &b_st0,                                // arg3
+    &zero,                                                                     // arg4
+    &r_alloc, &r_align, &r_off, &r_s0, &r_s1, &r_s2, &r_st0, &r_st1, &r_st2, // arg5
+  }; // 2 + 9 + 5 + 1 + 9 = 26
 
   CUDA_CHECK(cuLaunchKernel(fn,
-    (unsigned)D, (unsigned)T, (unsigned)N,  // gridX, gridY, gridZ
+    (unsigned)N, (unsigned)T, (unsigned)D,  // gridX, gridY, gridZ — matches gpu.launch order
     1, 1, 1,                                // blockX, blockY, blockZ
     0, nullptr, params, nullptr));
   CUDA_CHECK(cuCtxSynchronize());
