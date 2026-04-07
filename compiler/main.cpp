@@ -16,20 +16,20 @@
 int main(int argc, char **argv) {
   if (argc < 2) {
     llvm::errs() << "Usage: remora <input.mlir> "
-                    "--kernel=<elementwise|projection> "
+                    "--test=<elementwise|projection> "
                     "[--emit-ptx] [--run-gpu] "
                     "[--mlir-print-ir-after-all]\n";
     return 1;
   }
 
-  llvm::StringRef kernel;
+  llvm::StringRef test;
   bool debug = false;
   bool emitPtxMode = false;
   bool runGpuMode = false;
   for (int i = 2; i < argc; i++) {
     llvm::StringRef arg(argv[i]);
-    if (arg.starts_with("--kernel="))
-      kernel = arg.drop_front(9);
+    if (arg.starts_with("--test="))
+      test = arg.drop_front(7);
     else if (arg == "--mlir-print-ir-after-all")
       debug = true;
     else if (arg == "--emit-ptx")
@@ -39,9 +39,9 @@ int main(int argc, char **argv) {
   }
 
   if (!emitPtxMode && !runGpuMode &&
-      kernel != "elementwise" && kernel != "projection") {
-    llvm::errs() << "Unknown kernel '" << kernel
-                 << "'. Use --kernel=elementwise or --kernel=projection\n";
+      test != "elementwise" && test != "projection") {
+    llvm::errs() << "Unknown test '" << test
+                 << "'. Use --test=elementwise or --test=projection\n";
     return 1;
   }
 
@@ -65,6 +65,6 @@ int main(int argc, char **argv) {
   }
 
   if (emitPtxMode || runGpuMode)
-    return runGpu(*module, debug, runGpuMode, kernel);
-  return runCpu(*module, kernel, debug);
+    return runGpu(*module, debug, runGpuMode, test);
+  return runCpu(*module, test, debug);
 }

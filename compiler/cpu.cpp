@@ -102,7 +102,7 @@ static int runProjection(mlir::ExecutionEngine &engine) {
 // CPU backend entry point
 // ---------------------------------------------------------------------------
 
-int runCpu(mlir::ModuleOp module, llvm::StringRef kernel, bool debug) {
+int runCpu(mlir::ModuleOp module, llvm::StringRef test, bool debug) {
   // Tag public functions before the pass pipeline so createConvertFuncToLLVMPass
   // generates the C-interface wrapper.
   module->walk([](mlir::func::FuncOp func) {
@@ -152,7 +152,7 @@ int runCpu(mlir::ModuleOp module, llvm::StringRef kernel, bool debug) {
   }
   auto &engine = *engineOrErr;
 
-  if (kernel == "projection")
+  if (test == "projection")
     return runProjection(*engine.get());
   return runElementwise(*engine.get());
 }

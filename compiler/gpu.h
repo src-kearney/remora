@@ -3,4 +3,4 @@
 #include "llvm/ADT/StringRef.h"
 
 int runGpu(mlir::ModuleOp module, bool debug, bool launchOnGpu,
-           llvm::StringRef kernel);
+           llvm::StringRef test);

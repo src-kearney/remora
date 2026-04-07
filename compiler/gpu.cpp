@@ -183,13 +183,13 @@ static int launchElementwiseOnGpu(CUmodule cuMod, const std::string &ptx) {
 }
 
 static int launchOnGpu(const std::vector<std::string> &ptxModules,
-                       llvm::StringRef kernel) {
+                       llvm::StringRef test) {
   CUDA_CHECK(cuInit(0));
   CUdevice dev; CUDA_CHECK(cuDeviceGet(&dev, 0));
   CUcontext ctx; CUDA_CHECK(cuCtxCreate(&ctx, 0, dev));
 
   int ret = 0;
-  if (kernel == "elementwise") {
+  if (test == "elementwise") {
     if (ptxModules.size() != 1) {
       llvm::errs() << "Expected 1 PTX module for elementwise, got "
                    << ptxModules.size() << "\n";
@@ -201,7 +201,7 @@ static int launchOnGpu(const std::vector<std::string> &ptxModules,
       cuModuleUnload(cuMod);
     }
   } else {
-    llvm::errs() << "--run-gpu for kernel '" << kernel
+    llvm::errs() << "--run-gpu for test '" << test
                  << "' not yet implemented\n";
     ret = 1;
   }
@@ -217,7 +217,7 @@ static int launchOnGpu(const std::vector<std::string> &ptxModules,
 // ---------------------------------------------------------------------------
 
 int runGpu(mlir::ModuleOp module, bool debug, bool launchOnGpuFlag,
-           llvm::StringRef kernel) {
+           llvm::StringRef test) {
   mlir::PassManager pm(module->getContext());
   if (debug) pm.enableIRPrinting(
     nullptr,
@@ -306,7 +306,7 @@ int runGpu(mlir::ModuleOp module, bool debug, bool launchOnGpuFlag,
 
 #ifdef REMORA_CUDA
   if (launchOnGpuFlag)
-    return launchOnGpu(ptxModules, kernel);
+    return launchOnGpu(ptxModules, test);
 #else
   if (launchOnGpuFlag) {
     llvm::errs() << "--run-gpu requires building with CUDA "

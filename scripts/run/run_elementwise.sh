@@ -3,4 +3,4 @@ set -e
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 exec "$REPO_ROOT/compiler/build/remora" \
   "$REPO_ROOT/mlir/stablehlo/simple_attention_elementwise.mlir" \
-  --kernel=elementwise "$@"
+  --test=elementwise "$@"
