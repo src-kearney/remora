@@ -272,7 +272,11 @@ def run_remora_outlined(
 
     for e, x in enumerate(expert_tokens):
         T = x.shape[0]
-        if T == 0 or T < min_tokens:
+        if T == 0:
+            outputs[e] = x      # return existing empty slice — no allocation
+            continue
+        if T < min_tokens:
+            # Below threshold: return zeros so cat+index_add_ downstream stays valid.
             outputs[e] = torch.zeros(T, D, dtype=x.dtype, device=x.device)
             continue
         if streams is not None:
@@ -284,7 +288,16 @@ def run_remora_outlined(
             outputs[e] = fn(x, w_gate[e], w_up[e], w_down[e])
 
     if streams is not None:
-        torch.cuda.synchronize()
+        # GPU-side stream dependency: make the default stream wait for each
+        # expert stream that actually launched kernels.  This avoids a full
+        # torch.cuda.synchronize() (which blocks the CPU and waits for ALL
+        # streams including idle ones) and instead lets CUDA schedule the
+        # downstream cat + index_add_ after the expert streams complete.
+        default = torch.cuda.current_stream()
+        for e, x in enumerate(expert_tokens):
+            T = x.shape[0]
+            if T >= max(min_tokens, 1):   # only streams that launched kernels
+                default.wait_stream(streams[e])
 
     return outputs
 
