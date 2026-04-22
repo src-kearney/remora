@@ -145,21 +145,23 @@ def remora_forward(
         ids_k = topk_ids[:, k].long()   # [T]
         wts_k = topk_weights[:, k]      # [T]  fp16
 
-        # Gather: build per-expert token tensors for this top-k slot
-        masks         = [ids_k == e for e in range(E)]
-        expert_tokens = [
-            hidden_states[masks[e]] if masks[e].any()
-            else hidden_states.new_empty(0, D)
-            for e in range(E)
-        ]
+        # Sort tokens by expert id — one argsort, then one contiguous gather each.
+        # Replaces E boolean masks + E fancy-index calls with 3 CUDA ops.
+        sort_order  = torch.argsort(ids_k, stable=True)   # [T]
+        ids_sorted  = ids_k[sort_order]                    # [T]
+        x_sorted    = hidden_states[sort_order]            # [T, D]
+        wts_sorted  = wts_k[sort_order]                    # [T]
+
+        # Split into contiguous per-expert slices — pure metadata, no CUDA op.
+        counts      = torch.bincount(ids_sorted, minlength=E)   # [E]
+        expert_tokens = list(x_sorted.split(counts.tolist()))    # list[T_e, D]
 
         # Dispatch all experts (each gets the right compiled Triton bucket)
         expert_outs = run_remora_outlined(expert_tokens, w_gate, w_up, w_down)
 
-        # Scatter back, weighted by routing probability
-        for e in range(E):
-            if masks[e].any():
-                output[masks[e]] += wts_k[masks[e], None] * expert_outs[e]
+        # Scatter back — one cat + one index_add_ replaces E masked index_put calls.
+        out_sorted = torch.cat(expert_outs, dim=0)               # [T, D]
+        output.index_add_(0, sort_order, out_sorted * wts_sorted[:, None])
 
     return output
 

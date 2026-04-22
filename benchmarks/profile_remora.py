@@ -97,34 +97,30 @@ def remora_forward_annotated(
         ids_k = topk_ids[:, k].long()
         wts_k = topk_weights[:, k]
 
-        # --- mask creation --------------------------------------------------
-        masks = []
-        for e in range(E):
-            with torch.profiler.record_function("mask_creation"):
-                masks.append(ids_k == e)
+        # --- sort tokens by expert id ---------------------------------------
+        with torch.profiler.record_function("argsort"):
+            sort_order = torch.argsort(ids_k, stable=True)   # [T]
+            ids_sorted = ids_k[sort_order]                    # [T]
+            x_sorted   = hidden_states[sort_order]            # [T, D]
+            wts_sorted = wts_k[sort_order]                    # [T]
 
-        # --- any() + gather -------------------------------------------------
-        expert_tokens = []
-        for e in range(E):
-            with torch.profiler.record_function("any_check"):
-                has_tokens = masks[e].any().item()
-            with torch.profiler.record_function("gather"):
-                expert_tokens.append(
-                    hidden_states[masks[e]] if has_tokens
-                    else hidden_states.new_empty(0, D)
-                )
+        # --- bincount + split (metadata only, no CUDA op for split) --------
+        with torch.profiler.record_function("bincount"):
+            counts = torch.bincount(ids_sorted, minlength=E)  # [E]
+
+        with torch.profiler.record_function("split"):
+            expert_tokens = list(x_sorted.split(counts.tolist()))
 
         # --- Triton kernel dispatch -----------------------------------------
         with torch.profiler.record_function("run_remora_outlined"):
             expert_outs = run_remora_outlined(expert_tokens, w_gate, w_up, w_down)
 
-        # --- scatter-add ----------------------------------------------------
-        for e in range(E):
-            with torch.profiler.record_function("any_check"):
-                has_tokens = masks[e].any().item()
-            with torch.profiler.record_function("scatter"):
-                if has_tokens:
-                    output[masks[e]] += wts_k[masks[e], None] * expert_outs[e]
+        # --- cat + index_add_ (one scatter op) -----------------------------
+        with torch.profiler.record_function("cat"):
+            out_sorted = torch.cat(expert_outs, dim=0)        # [T, D]
+
+        with torch.profiler.record_function("index_add"):
+            output.index_add_(0, sort_order, out_sorted * wts_sorted[:, None])
 
     return output
 
@@ -232,11 +228,12 @@ def main() -> None:
     # ---- Phase summary table -----------------------------------------------
     PHASES = [
         "output_init",
-        "mask_creation",
-        "any_check",
-        "gather",
+        "argsort",
+        "bincount",
+        "split",
         "run_remora_outlined",
-        "scatter",
+        "cat",
+        "index_add",
     ]
 
     avgs = {e.key: e for e in prof.key_averages()}
