@@ -241,6 +241,16 @@ def main() -> None:
 
     avgs = {e.key: e for e in prof.key_averages()}
 
+    def _cuda_self_us(e) -> float:
+        """self_cuda_time_total was removed from FunctionEventAvg in newer PyTorch;
+        fall back through known attribute names to zero."""
+        for attr in ("self_cuda_time_total", "self_device_time_total",
+                     "cuda_time_total", "device_time_total"):
+            v = getattr(e, attr, None)
+            if v is not None:
+                return float(v)
+        return 0.0
+
     print("=" * 72)
     print("Phase summary  (CPU time = dispatch + sync overhead; "
           "CUDA time = GPU kernel execution)")
@@ -260,11 +270,11 @@ def main() -> None:
             print(f"  {phase:<20}  (not found in profile)")
             continue
         e          = avgs[phase]
-        cpu_tot_ms = e.self_cpu_time_total  / 1e3   # µs → ms
-        cuda_tot_ms= e.self_cuda_time_total / 1e3
-        calls      = e.count
-        cpu_avg_us = e.self_cpu_time_total  / max(calls, 1)
-        cuda_avg_us= e.self_cuda_time_total / max(calls, 1)
+        cpu_tot_ms  = e.self_cpu_time_total / 1e3   # µs → ms
+        cuda_tot_ms = _cuda_self_us(e)       / 1e3
+        calls       = e.count
+        cpu_avg_us  = e.self_cpu_time_total  / max(calls, 1)
+        cuda_avg_us = _cuda_self_us(e)       / max(calls, 1)
         total_cpu_ms  += cpu_tot_ms
         total_cuda_ms += cuda_tot_ms
         print(
@@ -275,12 +285,8 @@ def main() -> None:
 
     print("-" * 84)
     # Sum all CUDA kernel time (not just annotated phases) for the true GPU total
-    all_cuda_ms = sum(
-        e.self_cuda_time_total for e in prof.key_averages()
-    ) / 1e3
-    all_cpu_ms  = sum(
-        e.self_cpu_time_total  for e in prof.key_averages()
-    ) / 1e3
+    all_cuda_ms = sum(_cuda_self_us(e) for e in prof.key_averages()) / 1e3
+    all_cpu_ms  = sum(e.self_cpu_time_total for e in prof.key_averages()) / 1e3
 
     print()
     print("=" * 72)
