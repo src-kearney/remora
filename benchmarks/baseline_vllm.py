@@ -36,10 +36,17 @@ import torch
 # vLLM import — warn clearly if not available
 # ---------------------------------------------------------------------------
 try:
-    from vllm.model_executor.layers.fused_moe.fused_moe import fused_moe
-except ImportError:
+    import vllm.model_executor.layers.fused_moe.fused_moe as _fused_moe_mod
+    # The function is named fused_moe in most vLLM versions; fused_experts in some.
+    if hasattr(_fused_moe_mod, "fused_moe"):
+        fused_moe = _fused_moe_mod.fused_moe
+    elif hasattr(_fused_moe_mod, "fused_experts"):
+        fused_moe = _fused_moe_mod.fused_experts
+    else:
+        raise ImportError("neither fused_moe nor fused_experts found in vllm fused_moe module")
+except ImportError as e:
     print(
-        "ERROR: could not import fused_moe from vLLM.\n"
+        f"ERROR: could not import fused_moe from vLLM: {e}\n"
         "Install vLLM:  pip install vllm",
         file=sys.stderr,
     )
