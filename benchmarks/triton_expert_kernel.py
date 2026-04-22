@@ -246,19 +246,43 @@ def run_remora_outlined(
     w_gate:        torch.Tensor,         # [E, D, F] float16
     w_up:          torch.Tensor,         # [E, D, F] float16
     w_down:        torch.Tensor,         # [E, F, D] float16
+    min_tokens:    int  = 0,             # skip experts with fewer tokens than this
+    streams:       list = None,          # pre-created CUDA streams, one per expert
 ) -> list[torch.Tensor]:                 # len=E, each [T_e, D] float16
     """
     Dispatch each expert's tokens to the Triton kernel compiled for its
-    token-count bucket.  Zero-token experts are passed through unchanged.
+    token-count bucket.
+
+    min_tokens: experts with 0 < T < min_tokens are skipped; their output is
+    zeros of shape [T, D] so the downstream cat + index_add_ remains valid.
+    Experts with T == 0 are always skipped.
+
+    streams: when provided, each expert's kernels are launched on a separate
+    CUDA stream so they execute concurrently on the GPU.  Pass a list of
+    pre-created torch.cuda.Stream objects (one per expert) created once at
+    startup — stream creation itself is expensive.  A final synchronize()
+    ensures all streams are complete before returning.
     """
-    outputs = []
+    D       = w_gate.shape[1]   # hidden dim — correct output dim per token
+    E       = len(expert_tokens)
+    outputs = [None] * E
+
     for e, x in enumerate(expert_tokens):
         T = x.shape[0]
-        if T == 0:
-            outputs.append(x)
+        if T == 0 or T < min_tokens:
+            outputs[e] = torch.zeros(T, D, dtype=x.dtype, device=x.device)
             continue
-        fn = _get_dispatch_fn(T)
-        outputs.append(fn(x, w_gate[e], w_up[e], w_down[e]))
+        if streams is not None:
+            with torch.cuda.stream(streams[e]):
+                fn = _get_dispatch_fn(T)
+                outputs[e] = fn(x, w_gate[e], w_up[e], w_down[e])
+        else:
+            fn = _get_dispatch_fn(T)
+            outputs[e] = fn(x, w_gate[e], w_up[e], w_down[e])
+
+    if streams is not None:
+        torch.cuda.synchronize()
+
     return outputs
 
 
@@ -268,26 +292,41 @@ def run_remora_outlined(
 # ---------------------------------------------------------------------------
 
 def warmup_all_buckets(
-    hidden_dim: int = 4096,
-    inter_dim:  int = 14336,
-    device:     str = "cuda",
+    hidden_dim:  int  = 4096,
+    inter_dim:   int  = 14336,
+    device:      str  = "cuda",
+    use_streams: bool = False,
 ) -> None:
     """
     Drive one tiny forward pass per bucket to trigger Triton JIT compilation.
     Uses the minimum representable token count for each bucket.
+
+    use_streams: if True, each bucket's warmup pass runs on a dedicated CUDA
+    stream, ensuring the compiled kernels are cached for non-default streams.
     """
     print("Warming up Triton kernels for all buckets...")
-    dtype = torch.float16
-    for (lo, hi), cfg in BUCKET_CONFIGS.items():
-        T = max(lo, 1)          # smallest valid token count in this bucket
+    dtype        = torch.float16
+    bucket_items = list(BUCKET_CONFIGS.items())
+    streams      = (
+        [torch.cuda.Stream() for _ in bucket_items] if use_streams
+        else [None] * len(bucket_items)
+    )
+
+    for i, ((lo, hi), cfg) in enumerate(bucket_items):
+        T      = max(lo, 1)
         x      = torch.zeros(T, hidden_dim, dtype=dtype, device=device)
         w_gate = torch.zeros(hidden_dim, inter_dim, dtype=dtype, device=device)
         w_up   = torch.zeros(hidden_dim, inter_dim, dtype=dtype, device=device)
         w_down = torch.zeros(inter_dim, hidden_dim, dtype=dtype, device=device)
-        fn = DISPATCH_TABLE[(lo, hi)]
-        fn(x, w_gate, w_up, w_down)
+        fn     = DISPATCH_TABLE[(lo, hi)]
+        if streams[i] is not None:
+            with torch.cuda.stream(streams[i]):
+                fn(x, w_gate, w_up, w_down)
+        else:
+            fn(x, w_gate, w_up, w_down)
         torch.cuda.synchronize()
-        print(f"  bucket {lo:4d}–{hi:4d}  BLOCK_M={cfg['BLOCK_M']:3d}  compiled ✓")
+        stream_tag = f"  stream {i}" if use_streams else ""
+        print(f"  bucket {lo:4d}–{hi:4d}  BLOCK_M={cfg['BLOCK_M']:3d}  compiled ✓{stream_tag}")
     print()
 
 

@@ -136,6 +136,7 @@ def remora_forward(
     w_down:        torch.Tensor,   # [E, F, D]  float16
     topk_ids:      torch.Tensor,   # [T, top_k]  int32
     topk_weights:  torch.Tensor,   # [T, top_k]  float16
+    streams:       list = None,    # pre-created CUDA streams (one per expert)
 ) -> torch.Tensor:                 # [T, D]  float16
     T, D   = hidden_states.shape
     E      = w_gate.shape[0]
@@ -146,21 +147,22 @@ def remora_forward(
         wts_k = topk_weights[:, k]      # [T]  fp16
 
         # Sort tokens by expert id — one argsort, then one contiguous gather each.
-        # Replaces E boolean masks + E fancy-index calls with 3 CUDA ops.
-        sort_order  = torch.argsort(ids_k, stable=True)   # [T]
-        ids_sorted  = ids_k[sort_order]                    # [T]
-        x_sorted    = hidden_states[sort_order]            # [T, D]
-        wts_sorted  = wts_k[sort_order]                    # [T]
+        sort_order    = torch.argsort(ids_k, stable=True)          # [T]
+        ids_sorted    = ids_k[sort_order]                           # [T]
+        x_sorted      = hidden_states[sort_order]                   # [T, D]
+        wts_sorted    = wts_k[sort_order]                           # [T]
 
         # Split into contiguous per-expert slices — pure metadata, no CUDA op.
-        counts      = torch.bincount(ids_sorted, minlength=E)   # [E]
-        expert_tokens = list(x_sorted.split(counts.tolist()))    # list[T_e, D]
+        counts        = torch.bincount(ids_sorted, minlength=E)     # [E]
+        expert_tokens = list(x_sorted.split(counts.tolist()))       # list[T_e, D]
 
-        # Dispatch all experts (each gets the right compiled Triton bucket)
-        expert_outs = run_remora_outlined(expert_tokens, w_gate, w_up, w_down)
+        # Dispatch all experts — optionally concurrent on separate CUDA streams.
+        expert_outs = run_remora_outlined(
+            expert_tokens, w_gate, w_up, w_down, streams=streams
+        )
 
         # Scatter back — one cat + one index_add_ replaces E masked index_put calls.
-        out_sorted = torch.cat(expert_outs, dim=0)               # [T, D]
+        out_sorted = torch.cat(expert_outs, dim=0)                  # [T, D]
         output.index_add_(0, sort_order, out_sorted * wts_sorted[:, None])
 
     return output
@@ -232,7 +234,11 @@ def main() -> None:
                            dtype=DTYPE, device=device) * scale).contiguous()
 
     # ---- Pre-compile all Triton bucket kernels -----------------------------
-    warmup_all_buckets(hidden_dim=HIDDEN_DIM, inter_dim=INTERMEDIATE_DIM, device=device)
+    warmup_all_buckets(hidden_dim=HIDDEN_DIM, inter_dim=INTERMEDIATE_DIM,
+                       device=device, use_streams=True)
+
+    # ---- Pre-create CUDA streams (once — stream creation is expensive) -----
+    expert_streams = [torch.cuda.Stream() for _ in range(NUM_EXPERTS)]
 
     # ---- Header ------------------------------------------------------------
     col = 10
@@ -268,10 +274,11 @@ def main() -> None:
             WARMUP_ITERS, TIMED_ITERS,
         )
 
-        # Remora — per-expert bucket dispatch
+        # Remora — per-expert bucket dispatch, concurrent on separate streams
         remora_ms = _timed(
             lambda: remora_forward(
-                hidden_states, w_gate, w_up, w_down, topk_ids, topk_weights
+                hidden_states, w_gate, w_up, w_down, topk_ids, topk_weights,
+                streams=expert_streams,
             ),
             WARMUP_ITERS, TIMED_ITERS,
         )
