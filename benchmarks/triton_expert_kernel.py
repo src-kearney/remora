@@ -18,6 +18,7 @@ Usage (requires CUDA, tested on RTX 4080):
     python3 benchmarks/triton_expert_kernel.py
 """
 
+import json
 import sys
 import torch
 import triton
@@ -235,21 +236,63 @@ def _get_dispatch_fn(num_tokens: int):
 
 
 # ---------------------------------------------------------------------------
+# Load compiler decisions JSON
+# ---------------------------------------------------------------------------
+
+def load_compiler_decisions(path: str) -> dict[int, int]:
+    """
+    Load compiler_decisions.json and return a dict mapping expert slot id
+    to the BLOCK_M selected by the compiler.
+
+    JSON format:
+        {"expert_slot_0": {"tile_class": "large", "BLOCK_M": 128, ...}, ...}
+    """
+    with open(path) as f:
+        raw = json.load(f)
+    result: dict[int, int] = {}
+    for key, cfg in raw.items():
+        # key is "expert_slot_N"
+        slot_id = int(key.split("_")[-1])
+        result[slot_id] = cfg["BLOCK_M"]
+    return result
+
+
+def _make_dispatch_fn_for_block_m(block_m: int) -> callable:
+    """Return a dispatch function for a specific compiler-chosen BLOCK_M."""
+    # Use fixed BLOCK_N/BLOCK_K from the token-count bucket that has this BLOCK_M,
+    # falling back to sensible defaults if no bucket matches exactly.
+    cfg = next(
+        (c for c in BUCKET_CONFIGS.values() if c["BLOCK_M"] == block_m),
+        {"BLOCK_M": block_m, "BLOCK_N": 64, "BLOCK_K": 32},
+    )
+    return _make_dispatch_fn(cfg["BLOCK_M"], cfg["BLOCK_N"], cfg["BLOCK_K"])
+
+
+# ---------------------------------------------------------------------------
 # run_remora_outlined
 #
 # Simulates what the compiled @main produced by ExpertOutliningPass does:
 # tokens are already sliced per expert; we look up the bucket and dispatch.
+#
+# When compiler_decisions is provided, BLOCK_M comes from the compiler JSON
+# (shape-driven, per VISION.md).  Otherwise falls back to token-count buckets.
 # ---------------------------------------------------------------------------
 
 def run_remora_outlined(
-    expert_tokens: list[torch.Tensor],   # len=E, each [T_e, D] float16
-    w_gate:        torch.Tensor,         # [E, D, F] float16
-    w_up:          torch.Tensor,         # [E, D, F] float16
-    w_down:        torch.Tensor,         # [E, F, D] float16
-) -> list[torch.Tensor]:                 # len=E, each [T_e, D] float16
+    expert_tokens:      list[torch.Tensor],         # len=E, each [T_e, D] float16
+    w_gate:             torch.Tensor,               # [E, D, F] float16
+    w_up:               torch.Tensor,               # [E, D, F] float16
+    w_down:             torch.Tensor,               # [E, F, D] float16
+    compiler_decisions: dict[int, int] | None = None,  # slot_id → BLOCK_M
+) -> list[torch.Tensor]:                            # len=E, each [T_e, D] float16
     """
-    Dispatch each expert's tokens to the Triton kernel compiled for its
-    token-count bucket.  Zero-token experts are passed through unchanged.
+    Dispatch each expert's tokens to the Triton kernel selected for its slot.
+
+    If compiler_decisions is given, BLOCK_M is taken from the compiler's
+    per-expert decision (shape-driven specialization).  Otherwise BLOCK_M is
+    selected from the token-count BUCKET_CONFIGS table (runtime heuristic).
+
+    Zero-token experts are passed through unchanged regardless of dispatch mode.
     """
     outputs = []
     for e, x in enumerate(expert_tokens):
@@ -257,7 +300,10 @@ def run_remora_outlined(
         if T == 0:
             outputs.append(x)
             continue
-        fn = _get_dispatch_fn(T)
+        if compiler_decisions is not None and e in compiler_decisions:
+            fn = _make_dispatch_fn_for_block_m(compiler_decisions[e])
+        else:
+            fn = _get_dispatch_fn(T)
         outputs.append(fn(x, w_gate[e], w_up[e], w_down[e]))
     return outputs
 

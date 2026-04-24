@@ -1,0 +1,90 @@
+{
+  "expert_slot_0": {
+    "tile_class": "large",
+    "BLOCK_M": 128,
+    "intermediate_dim": 14336,
+    "BLOCK_N": 128,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 180388626432,
+    "bytes_estimate": 721420288,
+    "arithmetic_intensity": 250.04651162790697,
+    "cost_class": "large"
+  },
+  "expert_slot_1": {
+    "tile_class": "large",
+    "BLOCK_M": 128,
+    "intermediate_dim": 14336,
+    "BLOCK_N": 128,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 180388626432,
+    "bytes_estimate": 721420288,
+    "arithmetic_intensity": 250.04651162790697,
+    "cost_class": "large"
+  },
+  "expert_slot_2": {
+    "tile_class": "medium",
+    "BLOCK_M": 64,
+    "intermediate_dim": 8192,
+    "BLOCK_N": 128,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 103079215104,
+    "bytes_estimate": 419430400,
+    "arithmetic_intensity": 245.76,
+    "cost_class": "medium"
+  },
+  "expert_slot_3": {
+    "tile_class": "medium",
+    "BLOCK_M": 64,
+    "intermediate_dim": 8192,
+    "BLOCK_N": 128,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 103079215104,
+    "bytes_estimate": 419430400,
+    "arithmetic_intensity": 245.76,
+    "cost_class": "medium"
+  },
+  "expert_slot_4": {
+    "tile_class": "small",
+    "BLOCK_M": 32,
+    "intermediate_dim": 4096,
+    "BLOCK_N": 64,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 51539607552,
+    "bytes_estimate": 218103808,
+    "arithmetic_intensity": 236.30769230769232,
+    "cost_class": "small"
+  },
+  "expert_slot_5": {
+    "tile_class": "small",
+    "BLOCK_M": 32,
+    "intermediate_dim": 4096,
+    "BLOCK_N": 64,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 51539607552,
+    "bytes_estimate": 218103808,
+    "arithmetic_intensity": 236.30769230769232,
+    "cost_class": "small"
+  },
+  "expert_slot_6": {
+    "tile_class": "tiny",
+    "BLOCK_M": 16,
+    "intermediate_dim": 2048,
+    "BLOCK_N": 32,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 25769803776,
+    "bytes_estimate": 117440512,
+    "arithmetic_intensity": 219.42857142857142,
+    "cost_class": "tiny"
+  },
+  "expert_slot_7": {
+    "tile_class": "tiny",
+    "BLOCK_M": 16,
+    "intermediate_dim": 2048,
+    "BLOCK_N": 32,
+    "specialization_policy": "shape_static_v1",
+    "flops_estimate": 25769803776,
+    "bytes_estimate": 117440512,
+    "arithmetic_intensity": 219.42857142857142,
+    "cost_class": "tiny"
+  }
+}
