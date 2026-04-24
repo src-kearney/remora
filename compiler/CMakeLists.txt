@@ -41,7 +41,9 @@ include_directories(${MLIR_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 add_executable(remora main.cpp cpu.cpp cpu_tests.cpp gpu.cpp gpu_tests.cpp pipeline.cpp
-               passes/ExpertOutlining.cpp)
+               passes/ExpertOutlining.cpp
+               passes/ExpertCostAnalysis.cpp
+               passes/ExpertSpecialization.cpp)
 
 target_compile_options(remora PRIVATE -fno-rtti)
 
