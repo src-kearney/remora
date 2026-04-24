@@ -109,8 +109,11 @@ collectSwiGLU(stablehlo::DotGeneralOp downOp, Value gateResult,
 /// Clone one op into the outlined function body with the expert batch dim (0)
 /// stripped from its result types.  Operands are remapped via `mapping`.
 /// Constant operands not yet in the mapping are cloned fresh.
-static void cloneStripped(OpBuilder &b, Operation *op, IRMapping &mapping,
-                          int64_t numExperts, Location loc) {
+/// Returns failure() if an operand is neither in the mapping nor a constant
+/// (indicating the activation pattern is not plain SwiGLU).
+static LogicalResult cloneStripped(OpBuilder &b, Operation *op,
+                                   IRMapping &mapping, int64_t numExperts,
+                                   Location loc) {
   SmallVector<Value> operands;
   for (Value v : op->getOperands()) {
     if (mapping.contains(v)) {
@@ -119,8 +122,12 @@ static void cloneStripped(OpBuilder &b, Operation *op, IRMapping &mapping,
     }
     // Operand not in mapping — must be a constant defined outside the chain.
     Operation *def = v.getDefiningOp();
-    assert(def && isa<stablehlo::ConstantOp>(def) &&
-           "unmapped non-constant operand in SwiGLU subgraph");
+    if (!def || !isa<stablehlo::ConstantOp>(def)) {
+      op->emitError(
+          "moe-expert-outlining: unexpected non-constant operand in SwiGLU "
+          "subgraph — activation pattern may not be SwiGLU");
+      return failure();
+    }
     Operation *cloned = b.clone(*def);
     mapping.map(v, cloned->getResult(0));
     operands.push_back(cloned->getResult(0));
@@ -143,6 +150,8 @@ static void cloneStripped(OpBuilder &b, Operation *op, IRMapping &mapping,
 
   for (unsigned i = 0; i < op->getNumResults(); ++i)
     mapping.map(op->getResult(i), cloned->getResult(i));
+
+  return success();
 }
 
 // ---------------------------------------------------------------------------
@@ -165,28 +174,31 @@ struct ExpertSlot {
 // Build @expert_slot_N
 // ---------------------------------------------------------------------------
 
-static func::FuncOp buildExpertSlotFunc(ModuleOp module,
-                                         ExpertSlot &slot,
-                                         int64_t numExperts) {
+static FailureOr<func::FuncOp> buildExpertSlotFunc(ModuleOp module,
+                                                    ExpertSlot &slot,
+                                                    int64_t numExperts) {
   MLIRContext *ctx = module.getContext();
   Location loc = module.getLoc();
   auto f32 = Float32Type::get(ctx);
 
-  // Per-expert types (strip leading expert dim).
-  auto dispTy    = mlir::cast<RankedTensorType>(slot.dispatched.getType());
-  auto wGateTy   = mlir::cast<RankedTensorType>(slot.wGate.getType());
-  auto wUpTy     = mlir::cast<RankedTensorType>(slot.wUp.getType());
-  auto wDownTy   = mlir::cast<RankedTensorType>(slot.wDown.getType());
-  auto downResTy = mlir::cast<RankedTensorType>(slot.downOp.getResult().getType());
+  // Batched types from the slot (include leading expert dim).
+  auto batchedDispatchType  = mlir::cast<RankedTensorType>(slot.dispatched.getType());
+  auto batchedGateWeightType = mlir::cast<RankedTensorType>(slot.wGate.getType());
+  auto batchedUpWeightType   = mlir::cast<RankedTensorType>(slot.wUp.getType());
+  auto batchedDownWeightType = mlir::cast<RankedTensorType>(slot.wDown.getType());
+  auto batchedResultType     = mlir::cast<RankedTensorType>(slot.downOp.getResult().getType());
 
-  auto peDispTy   = stripLeadingDim(dispTy);    // [T, D]
-  auto peWGateTy  = stripLeadingDim(wGateTy);   // [D, F]
-  auto peWUpTy    = stripLeadingDim(wUpTy);      // [D, F]
-  auto peWDownTy  = stripLeadingDim(wDownTy);    // [F, D]
-  auto peResultTy = stripLeadingDim(downResTy);  // [T, D]
+  // Per-expert types (strip leading expert dim).
+  auto expertDispatchType  = stripLeadingDim(batchedDispatchType);   // [T, D]
+  auto expertGateWeightType = stripLeadingDim(batchedGateWeightType); // [D, F]
+  auto expertUpWeightType   = stripLeadingDim(batchedUpWeightType);   // [D, F]
+  auto expertDownWeightType = stripLeadingDim(batchedDownWeightType); // [F, D]
+  auto expertResultType     = stripLeadingDim(batchedResultType);     // [T, D]
 
   auto funcTy = FunctionType::get(
-      ctx, {peDispTy, peWGateTy, peWUpTy, peWDownTy}, {peResultTy});
+      ctx,
+      {expertDispatchType, expertGateWeightType, expertUpWeightType, expertDownWeightType},
+      {expertResultType});
   std::string funcName = "expert_slot_" + std::to_string(slot.slotId);
 
   // Insert before everything else in the module (before @main).
@@ -198,8 +210,7 @@ static func::FuncOp buildExpertSlotFunc(ModuleOp module,
   func->setAttr("moe.slot_id", IntegerAttr::get(i32, slot.slotId));
   func->setAttr("moe.num_experts", IntegerAttr::get(i32, numExperts));
   func->setAttr("moe.tokens_per_slot",
-                IntegerAttr::get(i32, dispTy.getDimSize(1)));
-  func->setAttr("moe.token_bucket", StringAttr::get(ctx, "large"));
+                IntegerAttr::get(i32, batchedDispatchType.getDimSize(1)));
 
   // Build the function body.
   Block *block = func.addEntryBlock();
@@ -210,9 +221,25 @@ static func::FuncOp buildExpertSlotFunc(ModuleOp module,
   Value wUpArg   = block->getArgument(2); // [D, F]
   Value wDownArg = block->getArgument(3); // [F, D]
 
-  int64_t T = peDispTy.getDimSize(0);   // 512
-  int64_t F = peWGateTy.getDimSize(1);  // 14336
-  int64_t D = peDispTy.getDimSize(1);   // 4096
+  int64_t T = expertDispatchType.getDimSize(0);   // 512
+  int64_t F = expertGateWeightType.getDimSize(1); // 14336 (intermediate dim)
+  int64_t D = expertDispatchType.getDimSize(1);   // 4096
+
+  // Compute and attach shape-derived compilation attributes.
+  auto i64 = IntegerType::get(ctx, 64);
+  // Thresholds use strict > so that each boundary value falls in the lower
+  // class: F=8192 → medium (64), F=4096 → small (32), F=2048 → tiny (16).
+  StringRef tileClass = F > 8192 ? "large"
+                      : F > 4096 ? "medium"
+                      : F > 2048 ? "small"
+                      :            "tiny";
+  int64_t blockM = F > 8192 ? 128
+                 : F > 4096 ?  64
+                 : F > 2048 ?  32
+                 :             16;
+  func->setAttr("moe.intermediate_dim", IntegerAttr::get(i64, F));
+  func->setAttr("moe.tile_class",       StringAttr::get(ctx, tileClass));
+  func->setAttr("moe.BLOCK_M",          IntegerAttr::get(i64, blockM));
 
   // Non-batched dimension numbers: contracting [1] × [0].
   auto noBatch = stablehlo::DotDimensionNumbersAttr::get(
@@ -234,8 +261,12 @@ static func::FuncOp buildExpertSlotFunc(ModuleOp module,
   IRMapping mapping;
   mapping.map(slot.gateOp.getResult(), gateVal.getResult());
   mapping.map(slot.upOp.getResult(), upVal.getResult());
-  for (Operation *op : slot.swigluOps)
-    cloneStripped(b, op, mapping, numExperts, loc);
+  for (Operation *op : slot.swigluOps) {
+    if (failed(cloneStripped(b, op, mapping, numExperts, loc))) {
+      func.erase();
+      return failure();
+    }
+  }
 
   // down = dot(silu_out, w_down, contracting=[1]×[0]) → [T, D]
   Value siluOut = mapping.lookup(slot.downOp.getLhs());
@@ -260,70 +291,70 @@ static void replaceSlotInMain(func::FuncOp mainFunc, ExpertSlot &slot,
   // Insert new ops immediately before the gate op.
   OpBuilder b(slot.gateOp);
 
-  auto dispTy  = mlir::cast<RankedTensorType>(slot.dispatched.getType());
-  auto wGateTy = mlir::cast<RankedTensorType>(slot.wGate.getType());
-  auto wDownTy = mlir::cast<RankedTensorType>(slot.wDown.getType());
+  auto batchedDispatchType  = mlir::cast<RankedTensorType>(slot.dispatched.getType());
+  auto batchedGateWeightType = mlir::cast<RankedTensorType>(slot.wGate.getType());
+  auto batchedDownWeightType = mlir::cast<RankedTensorType>(slot.wDown.getType());
 
-  int64_t T  = dispTy.getDimSize(1);   // 512   — token dim
-  int64_t D  = dispTy.getDimSize(2);   // 4096  — hidden dim
-  int64_t Dw = wGateTy.getDimSize(1);  // 4096  — gate/up rhs dim 1
-  int64_t F  = wGateTy.getDimSize(2);  // 14336 — intermediate dim
-  int64_t Fd = wDownTy.getDimSize(1);  // 14336 — down rhs dim 1
-  int64_t Dd = wDownTy.getDimSize(2);  // 4096  — down rhs dim 2
+  int64_t numTokens        = batchedDispatchType.getDimSize(1);   // 512   — token dim
+  int64_t hiddenDim        = batchedDispatchType.getDimSize(2);   // 4096  — hidden dim
+  int64_t gateWeightInDim  = batchedGateWeightType.getDimSize(1); // 4096  — gate/up rhs dim 1
+  int64_t intermediateDim  = batchedGateWeightType.getDimSize(2); // 14336 — intermediate dim
+  int64_t downWeightInDim  = batchedDownWeightType.getDimSize(1); // 14336 — down rhs dim 1
+  int64_t downWeightOutDim = batchedDownWeightType.getDimSize(2); // 4096  — down rhs dim 2
 
   SmallVector<Value> perExpertOuts;
   perExpertOuts.reserve(numExperts);
 
   for (int64_t e = 0; e < numExperts; ++e) {
-    // slice dispatched[e:e+1, :, :] → reshape → [T, D]
-    auto dispSlice = b.create<stablehlo::SliceOp>(
+    // slice dispatched[e:e+1, :, :] → reshape → [numTokens, hiddenDim]
+    auto dispatchSlice = b.create<stablehlo::SliceOp>(
         loc, slot.dispatched,
         DenseI64ArrayAttr::get(ctx, {e, 0, 0}),
-        DenseI64ArrayAttr::get(ctx, {e + 1, T, D}),
+        DenseI64ArrayAttr::get(ctx, {e + 1, numTokens, hiddenDim}),
         DenseI64ArrayAttr::get(ctx, {1, 1, 1}));
-    auto dispReshaped = b.create<stablehlo::ReshapeOp>(
-        loc, RankedTensorType::get({T, D}, f32), dispSlice);
+    auto dispatchReshaped = b.create<stablehlo::ReshapeOp>(
+        loc, RankedTensorType::get({numTokens, hiddenDim}, f32), dispatchSlice);
 
-    // slice w_gate[e:e+1, :, :] → reshape → [Dw, F]
-    auto wgSlice = b.create<stablehlo::SliceOp>(
+    // slice w_gate[e:e+1, :, :] → reshape → [gateWeightInDim, intermediateDim]
+    auto gateWeightSlice = b.create<stablehlo::SliceOp>(
         loc, slot.wGate,
         DenseI64ArrayAttr::get(ctx, {e, 0, 0}),
-        DenseI64ArrayAttr::get(ctx, {e + 1, Dw, F}),
+        DenseI64ArrayAttr::get(ctx, {e + 1, gateWeightInDim, intermediateDim}),
         DenseI64ArrayAttr::get(ctx, {1, 1, 1}));
-    auto wgReshaped = b.create<stablehlo::ReshapeOp>(
-        loc, RankedTensorType::get({Dw, F}, f32), wgSlice);
+    auto gateWeightReshaped = b.create<stablehlo::ReshapeOp>(
+        loc, RankedTensorType::get({gateWeightInDim, intermediateDim}, f32), gateWeightSlice);
 
-    // slice w_up[e:e+1, :, :] → reshape → [Dw, F]
-    auto wuSlice = b.create<stablehlo::SliceOp>(
+    // slice w_up[e:e+1, :, :] → reshape → [gateWeightInDim, intermediateDim]
+    auto upWeightSlice = b.create<stablehlo::SliceOp>(
         loc, slot.wUp,
         DenseI64ArrayAttr::get(ctx, {e, 0, 0}),
-        DenseI64ArrayAttr::get(ctx, {e + 1, Dw, F}),
+        DenseI64ArrayAttr::get(ctx, {e + 1, gateWeightInDim, intermediateDim}),
         DenseI64ArrayAttr::get(ctx, {1, 1, 1}));
-    auto wuReshaped = b.create<stablehlo::ReshapeOp>(
-        loc, RankedTensorType::get({Dw, F}, f32), wuSlice);
+    auto upWeightReshaped = b.create<stablehlo::ReshapeOp>(
+        loc, RankedTensorType::get({gateWeightInDim, intermediateDim}, f32), upWeightSlice);
 
-    // slice w_down[e:e+1, :, :] → reshape → [Fd, Dd]
-    auto wdSlice = b.create<stablehlo::SliceOp>(
+    // slice w_down[e:e+1, :, :] → reshape → [downWeightInDim, downWeightOutDim]
+    auto downWeightSlice = b.create<stablehlo::SliceOp>(
         loc, slot.wDown,
         DenseI64ArrayAttr::get(ctx, {e, 0, 0}),
-        DenseI64ArrayAttr::get(ctx, {e + 1, Fd, Dd}),
+        DenseI64ArrayAttr::get(ctx, {e + 1, downWeightInDim, downWeightOutDim}),
         DenseI64ArrayAttr::get(ctx, {1, 1, 1}));
-    auto wdReshaped = b.create<stablehlo::ReshapeOp>(
-        loc, RankedTensorType::get({Fd, Dd}, f32), wdSlice);
+    auto downWeightReshaped = b.create<stablehlo::ReshapeOp>(
+        loc, RankedTensorType::get({downWeightInDim, downWeightOutDim}, f32), downWeightSlice);
 
-    // call @expert_slot_N → [T, D]
+    // call @expert_slot_N → [numTokens, hiddenDim]
     auto callOp = b.create<func::CallOp>(
         loc, outlinedFunc,
-        ValueRange{dispReshaped, wgReshaped, wuReshaped, wdReshaped});
+        ValueRange{dispatchReshaped, gateWeightReshaped, upWeightReshaped, downWeightReshaped});
 
-    // reshape [T, D] → [1, T, D] for concatenation
-    auto batched = b.create<stablehlo::ReshapeOp>(
-        loc, RankedTensorType::get({1, T, D}, f32), callOp.getResult(0));
-    perExpertOuts.push_back(batched.getResult());
+    // reshape [numTokens, hiddenDim] → [1, numTokens, hiddenDim] for concatenation
+    auto batchedResult = b.create<stablehlo::ReshapeOp>(
+        loc, RankedTensorType::get({1, numTokens, hiddenDim}, f32), callOp.getResult(0));
+    perExpertOuts.push_back(batchedResult.getResult());
   }
 
-  // concatenate [1,T,D] × numExperts → [numExperts, T, D]
-  auto concatTy = RankedTensorType::get({numExperts, T, D}, f32);
+  // concatenate [1, numTokens, hiddenDim] × numExperts → [numExperts, numTokens, hiddenDim]
+  auto concatTy = RankedTensorType::get({numExperts, numTokens, hiddenDim}, f32);
   auto concat = b.create<stablehlo::ConcatenateOp>(
       loc, concatTy, ValueRange(perExpertOuts), /*dimension=*/0);
 
@@ -346,8 +377,23 @@ struct ExpertOutliningPass
     : public PassWrapper<ExpertOutliningPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpertOutliningPass)
 
-  int64_t numExperts;
-  explicit ExpertOutliningPass(int64_t n = 8) : numExperts(n) {}
+  Option<int64_t> numExpertsOpt{
+      *this, "num_experts",
+      llvm::cl::desc("Number of experts per slot (default: 8)"),
+      llvm::cl::init(8)
+  };
+
+  // User-defined copy constructor suppresses the implicit default constructor,
+  // so we must restore it explicitly.
+  ExpertOutliningPass() = default;
+
+  // Option<T> inherits from llvm::cl::opt<T> which deletes its copy
+  // constructor.  PassWrapper::clonePass() uses copy construction, so we
+  // must provide our own copy constructor that default-constructs the base
+  // (giving a fresh pass with options registered) and then copies the value.
+  ExpertOutliningPass(const ExpertOutliningPass &src) {
+    numExpertsOpt = static_cast<int64_t>(src.numExpertsOpt);
+  }
 
   StringRef getArgument() const override { return "moe-expert-outlining"; }
   StringRef getDescription() const override {
@@ -355,6 +401,7 @@ struct ExpertOutliningPass
   }
 
   void runOnOperation() override {
+    int64_t numExperts = numExpertsOpt;
     ModuleOp module = getOperation();
 
     // Find @main.
@@ -479,8 +526,14 @@ struct ExpertOutliningPass
     // rewrite @main.  Building first avoids iterator invalidation during
     // the walk that found the slots.
     SmallVector<func::FuncOp> outlinedFuncs;
-    for (auto &slot : slots)
-      outlinedFuncs.push_back(buildExpertSlotFunc(module, slot, numExperts));
+    for (auto &slot : slots) {
+      auto result = buildExpertSlotFunc(module, slot, numExperts);
+      if (failed(result)) {
+        signalPassFailure();
+        return;
+      }
+      outlinedFuncs.push_back(*result);
+    }
 
     for (int i = 0; i < static_cast<int>(slots.size()); ++i)
       replaceSlotInMain(mainFunc, slots[i], outlinedFuncs[i], numExperts);
@@ -493,8 +546,10 @@ struct ExpertOutliningPass
 // Public API
 // ---------------------------------------------------------------------------
 
-std::unique_ptr<Pass> createExpertOutliningPass(int64_t numExperts) {
-  return std::make_unique<ExpertOutliningPass>(numExperts);
+std::unique_ptr<Pass> createExpertOutliningPass(int64_t /*numExperts*/) {
+  // numExperts is now configured via the pipeline option string:
+  //   --pass-pipeline='moe-expert-outlining{num_experts=N}'
+  return std::make_unique<ExpertOutliningPass>();
 }
 
 void registerExpertOutliningPass() {
