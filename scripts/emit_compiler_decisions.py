@@ -2,15 +2,34 @@
 """
 scripts/emit_compiler_decisions.py
 
-Runs the two-pass remora pipeline (moe-expert-outlining + moe-expert-cost-analysis)
+Runs the full Remora pass pipeline (outlining + cost-analysis + specialization)
 on a StableHLO/MLIR input, parses per-expert attributes from the phase-dump IR,
 and writes compiler_decisions.json.
 
+Two specialization policies are supported:
+
+  shape_static_v1  (default)
+    BLOCK_M selected by intermediate dim F.  Matches the C++ specialization pass.
+    F > 8192 → 128, F > 4096 → 64, F > 2048 → 32, else 16.
+
+  token_pgo_v2  (--routing-stats path/to/routing_stats.json)
+    BLOCK_M selected by expected per-expert token count T (p50 from routing stats).
+    T ≥ 256 → 128, T ≥ 128 → 64, T ≥ 64 → 32, else 16.
+    Oracle sweep (sweep_heterogeneous.py --extended) shows T is the dominant signal.
+
 Usage:
+    # V1 (shape-static, default)
     python3 scripts/emit_compiler_decisions.py \\
         --input  mlir/stablehlo/heterogeneous_moe_layer.mlir \\
         --num-experts 1 \\
         --output compiler_decisions.json
+
+    # V2 (PGO, token-based)
+    python3 scripts/emit_compiler_decisions.py \\
+        --input  mlir/stablehlo/heterogeneous_moe_layer.mlir \\
+        --num-experts 1 \\
+        --routing-stats routing_stats_proportional.json \\
+        --output compiler_decisions_v2.json
 """
 
 import argparse
@@ -108,6 +127,52 @@ _RE_COST_CLASS = re.compile(r'moe\.cost_class\s*=\s*"([^"]+)"')
 _RE_POLICY     = re.compile(r'moe\.specialization_policy\s*=\s*"([^"]+)"')
 
 
+# ---------------------------------------------------------------------------
+# V2 policy: token-count-based BLOCK_M selection
+# ---------------------------------------------------------------------------
+
+def block_m_from_tokens(t: int) -> int:
+    """Select BLOCK_M from per-expert expected token count.
+
+    Thresholds derived from oracle sweep (sweep_heterogeneous.py --extended):
+    optimal BLOCK_M tracks token count T, not intermediate dim F.
+    """
+    if t >= 256: return 128
+    if t >= 128: return 64
+    if t >= 64:  return 32
+    return 16
+
+
+def apply_pgo_overrides(
+    decisions: dict[str, dict],
+    routing_stats: dict,
+) -> dict[str, dict]:
+    """Override BLOCK_M in ``decisions`` using per-expert token counts.
+
+    routing_stats must contain:
+      ``expert_token_counts``: dict mapping "expert_N" → {mean, p50, p95}.
+
+    Uses p50 (median) as the representative T.  Sets
+    ``specialization_policy = "token_pgo_v2"`` and adds ``expected_tokens``
+    to each entry.  BLOCK_N is fixed at 64 (matches oracle BN).
+    Entries with no corresponding routing stat are left unchanged (V1 fallback).
+    """
+    counts = routing_stats.get("expert_token_counts", {})
+    for slot_key, cfg in decisions.items():
+        slot_id  = int(slot_key.split("_")[-1])   # "expert_slot_N" → N
+        stat_key = f"expert_{slot_id}"
+        if stat_key not in counts:
+            print(f"warning: no routing stats for {stat_key}, "
+                  f"keeping V1 decision for {slot_key}", file=sys.stderr)
+            continue
+        p50 = int(counts[stat_key]["p50"])
+        cfg["BLOCK_M"]               = block_m_from_tokens(p50)
+        cfg["BLOCK_N"]               = 64   # fixed; matches oracle BN=64
+        cfg["expected_tokens"]       = p50
+        cfg["specialization_policy"] = "token_pgo_v2"
+    return decisions
+
+
 def parse_decisions(ir_text: str) -> dict[str, dict]:
     """
     Parse all @expert_slot_N function declarations from the IR text.
@@ -189,13 +254,32 @@ def main() -> None:
         "--output", required=True,
         help="Output path for compiler_decisions.json",
     )
+    parser.add_argument(
+        "--routing-stats", default=None, metavar="PATH",
+        help=(
+            "Path to routing_stats.json (output of generate_routing_stats.py). "
+            "When provided, uses V2 token-based BLOCK_M policy "
+            "(specialization_policy=token_pgo_v2) instead of V1 shape-static policy."
+        ),
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         sys.exit(f"error: input file not found: {args.input}")
 
-    print(f"Running outlining + cost-analysis "
+    routing_stats = None
+    if args.routing_stats:
+        if not os.path.exists(args.routing_stats):
+            sys.exit(f"error: routing stats file not found: {args.routing_stats}")
+        with open(args.routing_stats) as f:
+            routing_stats = json.load(f)
+        policy_label = "token_pgo_v2"
+    else:
+        policy_label = "shape_static_v1"
+
+    print(f"Running outlining + cost-analysis + specialization "
           f"(num_experts={args.num_experts}) on {args.input} ...")
+    print(f"Specialization policy: {policy_label}")
     ir_text = run_pipeline(args.input, args.num_experts)
 
     decisions = parse_decisions(ir_text)
@@ -206,6 +290,9 @@ def main() -> None:
             "       Check that the input IR matches the expected format and "
             "that --num-experts matches the batch dimension."
         )
+
+    if routing_stats is not None:
+        decisions = apply_pgo_overrides(decisions, routing_stats)
 
     ordered = dict(sorted(decisions.items(),
                           key=lambda kv: int(kv[0].split("_")[-1])))
@@ -219,16 +306,17 @@ def main() -> None:
         f.write("\n")
 
     print(f"Wrote {len(ordered)} expert decisions to {args.output}")
-    has_cost = "arithmetic_intensity" in next(iter(ordered.values()))
     for slot, cfg in ordered.items():
-        ai_str = (f"  AI={cfg['arithmetic_intensity']:.2f}"
-                  if "arithmetic_intensity" in cfg else "")
+        ai_str  = (f"  AI={cfg['arithmetic_intensity']:.2f}"
+                   if "arithmetic_intensity" in cfg else "")
         cls_str = (f"  cost_class={cfg['cost_class']!r}"
                    if "cost_class" in cfg else "")
+        tok_str = (f"  expected_tokens={cfg['expected_tokens']}"
+                   if "expected_tokens" in cfg else "")
         print(f"  {slot}: tile_class={cfg['tile_class']!r:8s}  "
               f"BLOCK_M={cfg['BLOCK_M']:3d}  "
               f"intermediate_dim={cfg['intermediate_dim']}"
-              f"{ai_str}{cls_str}")
+              f"{tok_str}{ai_str}{cls_str}")
 
 
 if __name__ == "__main__":
