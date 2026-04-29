@@ -1,0 +1,22 @@
+# benchmarks/requirements.txt
+#
+# Python dependencies for benchmarks/ and scripts/verify/.
+# Requires a CUDA-capable GPU (tested on RTX 4090, CUDA 12.x).
+#
+# Install:
+#   pip install -r benchmarks/requirements.txt
+#
+# vLLM is only needed for the comparison benchmarks (sweep_skew.py,
+# sweep_expert_count.py, sweep_concentration.py, baseline_vllm.py).
+# The correctness check (verify_heterogeneous_correctness.py) and
+# triton_expert_kernel.py run without vLLM.
+
+# Core
+torch>=2.1.0           # must be a CUDA build: pip install torch --index-url https://download.pytorch.org/whl/cu121
+triton>=2.1.0           # usually installed as a torch dependency; pin if needed
+numpy>=1.24.0
+
+# vLLM -- comparison baseline only
+# Install separately; version must match your CUDA + torch versions.
+# See https://docs.vllm.ai/en/latest/getting_started/installation.html
+# vllm>=0.3.0
