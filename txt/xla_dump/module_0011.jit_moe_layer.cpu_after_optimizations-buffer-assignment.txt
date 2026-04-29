@@ -1,0 +1,313 @@
+BufferAssignment:
+allocation 0: size 16384, parameter 3, shape |f32[2,32,64]| at ShapeIndex {}:
+ value: <58 w_up.1 @0> (size=16384,offset=0): f32[2,32,64]{2,1,0}
+allocation 1: size 16384, parameter 2, shape |f32[2,32,64]| at ShapeIndex {}:
+ value: <60 w_gate.1 @0> (size=16384,offset=0): f32[2,32,64]{2,1,0}
+allocation 2: size 16384, parameter 4, shape |f32[2,64,32]| at ShapeIndex {}:
+ value: <63 w_down.1 @0> (size=16384,offset=0): f32[2,64,32]{2,1,0}
+allocation 3: size 1024, output shape is |f32[8,32]|, maybe-live-out:
+ value: <52 dot_general.6 @0> (size=64,offset=0): f32[8,2]{1,0}
+ value: <66 dot.1 @0> (size=1024,offset=0): f32[8,32]{1,0}
+allocation 4: size 1024, parameter 0, shape |f32[8,32]| at ShapeIndex {}:
+ value: <50 tokens.1 @0> (size=1024,offset=0): f32[8,32]{1,0}
+allocation 5: size 256, parameter 1, shape |f32[32,2]| at ShapeIndex {}:
+ value: <51 router_w.1 @0> (size=256,offset=0): f32[32,2]{1,0}
+allocation 6: size 1, thread-local:
+ value: <11 or.3 @0> (size=1,offset=0): pred[]
+allocation 7: size 1, thread-local:
+ value: <10 and.1 @0> (size=1,offset=0): pred[]
+allocation 8: size 16, thread-local:
+ value: <13 tuple.1{} @0> (size=16,offset=0): (f32[], s32[])
+allocation 9: size 4, thread-local:
+ value: <0 reduce.4 @0> (size=4,offset=0): f32[]
+allocation 10: size 4, thread-local:
+ value: <1 reduce.6 @0> (size=4,offset=0): f32[]
+allocation 11: size 4, thread-local:
+ value: <5 select_n.2 @0> (size=4,offset=0): f32[]
+allocation 12: size 4, thread-local:
+ value: <7 reduce.5 @0> (size=4,offset=0): s32[]
+allocation 13: size 4, thread-local:
+ value: <8 reduce.7 @0> (size=4,offset=0): s32[]
+allocation 14: size 4, thread-local:
+ value: <12 select_n.3 @0> (size=4,offset=0): s32[]
+allocation 15: size 1, thread-local:
+ value: <2 gt.1 @0> (size=1,offset=0): pred[]
+allocation 16: size 1, thread-local:
+ value: <3 ne.1 @0> (size=1,offset=0): pred[]
+allocation 17: size 1, thread-local:
+ value: <4 or.2 @0> (size=1,offset=0): pred[]
+allocation 18: size 1, thread-local:
+ value: <6 eq.1 @0> (size=1,offset=0): pred[]
+allocation 19: size 1, thread-local:
+ value: <9 lt.1 @0> (size=1,offset=0): pred[]
+allocation 20: size 10320, preallocated-temp:
+ value: <53 iota_reduce_fusion{} @0> (size=16,offset=10304): (f32[8]{0}, s32[8]{0})
+ value: <54 iota_reduce_fusion{0} @0> (size=32,offset=64): f32[8]{0}
+ value: <55 iota_reduce_fusion{1} @0> (size=32,offset=0): s32[8]{0}
+ value: <56 compare_convert_fusion @0> (size=64,offset=10240): f32[8,2]{1,0}
+ value: <57 transpose_copy_fusion.1 @0> (size=2048,offset=8192): f32[2,8,32]{2,1,0}
+ value: <59 dot_general.9 @0> (size=4096,offset=4096): f32[2,8,64]{2,1,0}
+ value: <61 dot_general.8 @0> (size=4096,offset=0): f32[2,8,64]{2,1,0}
+ value: <62 multiply_multiply_fusion @0> (size=4096,offset=4096): f32[2,8,64]{2,1,0}
+ value: <64 dot_general.10 @0> (size=2048,offset=0): f32[2,8,32]{2,1,0}
+ value: <65 transpose_copy_fusion @0> (size=2048,offset=2048): f32[8,2,32]{2,1,0}
+
+Total bytes used: 61823 (60.4KiB)
+
+Used values:
+<0 reduce.4 @0>
+ positions:
+  reduce.4
+ uses:
+  gt.1, operand 0
+  ne.1, operand 0
+  ne.1, operand 1
+  select_n.2, operand 1
+  eq.1, operand 0
+ from instruction: %reduce.4 = f32[] parameter(0), metadata={op_name="reduce"}
+<1 reduce.6 @0>
+ positions:
+  reduce.6
+ uses:
+  gt.1, operand 1
+  select_n.2, operand 2
+  eq.1, operand 1
+ from instruction: %reduce.6 = f32[] parameter(2), metadata={op_name="reduce"}
+<2 gt.1 @0>
+ positions:
+  gt.1
+ uses:
+  or.2, operand 0
+ from instruction: %gt.1 = pred[] compare(%reduce.4, %reduce.6), direction=GT, metadata={op_name="gt" stack_frame_id=3}
+<3 ne.1 @0>
+ positions:
+  ne.1
+ uses:
+  or.2, operand 1
+ from instruction: %ne.1 = pred[] compare(%reduce.4, %reduce.4), direction=NE, metadata={op_name="ne" stack_frame_id=3}
+<4 or.2 @0>
+ positions:
+  or.2
+ uses:
+  select_n.2, operand 0
+  or.3, operand 0
+ from instruction: %or.2 = pred[] or(%gt.1, %ne.1), metadata={op_name="or" stack_frame_id=3}
+<5 select_n.2 @0>
+ positions:
+  select_n.2
+  tuple.1 {0}
+ uses:
+  tuple.1, operand 0
+ from instruction: %select_n.2 = f32[] select(%or.2, %reduce.4, %reduce.6), metadata={op_name="select_n" stack_frame_id=3}
+<6 eq.1 @0>
+ positions:
+  eq.1
+ uses:
+  and.1, operand 0
+ from instruction: %eq.1 = pred[] compare(%reduce.4, %reduce.6), direction=EQ, metadata={op_name="eq" stack_frame_id=3}
+<7 reduce.5 @0>
+ positions:
+  reduce.5
+ uses:
+  lt.1, operand 0
+  select_n.3, operand 1
+ from instruction: %reduce.5 = s32[] parameter(1), metadata={op_name="reduce"}
+<8 reduce.7 @0>
+ positions:
+  reduce.7
+ uses:
+  lt.1, operand 1
+  select_n.3, operand 2
+ from instruction: %reduce.7 = s32[] parameter(3), metadata={op_name="reduce"}
+<9 lt.1 @0>
+ positions:
+  lt.1
+ uses:
+  and.1, operand 1
+ from instruction: %lt.1 = pred[] compare(%reduce.5, %reduce.7), direction=LT, metadata={op_name="lt" stack_frame_id=3}
+<10 and.1 @0>
+ positions:
+  and.1
+ uses:
+  or.3, operand 1
+ from instruction: %and.1 = pred[] and(%eq.1, %lt.1), metadata={op_name="and" stack_frame_id=3}
+<11 or.3 @0>
+ positions:
+  or.3
+ uses:
+  select_n.3, operand 0
+ from instruction: %or.3 = pred[] or(%or.2, %and.1), metadata={op_name="or" stack_frame_id=3}
+<12 select_n.3 @0>
+ positions:
+  select_n.3
+  tuple.1 {1}
+ uses:
+  tuple.1, operand 1
+ from instruction: %select_n.3 = s32[] select(%or.3, %reduce.5, %reduce.7), metadata={op_name="select_n" stack_frame_id=3}
+<13 tuple.1{} @0>
+ positions:
+  tuple.1 {}
+ uses:
+ from instruction: %tuple.1 = (f32[], s32[]) tuple(%select_n.2, %select_n.3)
+<50 tokens.1 @0>
+ positions:
+  tokens.1
+ uses:
+  dot_general.6, operand 0
+  transpose_copy_fusion.1, operand 0
+ from instruction: %tokens.1 = f32[8,32]{1,0} parameter(0), metadata={op_name="tokens"}
+<51 router_w.1 @0>
+ positions:
+  router_w.1
+ uses:
+  dot_general.6, operand 1
+ from instruction: %router_w.1 = f32[32,2]{1,0} parameter(1), metadata={op_name="router_w"}
+<52 dot_general.6 @0>
+ positions:
+  dot_general.6
+ uses:
+  iota_reduce_fusion, operand 0
+ from instruction: %dot_general.6 = f32[8,2]{1,0} dot(%tokens.1, %router_w.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(moe_layer)/dot_general" stack_frame_id=2}
+<53 iota_reduce_fusion{} @0>
+ positions:
+  iota_reduce_fusion {}
+ uses:
+  reduce.1, operand 0 {}
+ from instruction: %iota_reduce_fusion = (f32[8]{0}, s32[8]{0}) fusion(%dot_general.6), kind=kLoop, calls=%fused_computation.5, metadata={op_name="jit(moe_layer)/reduce" stack_frame_id=3}
+<54 iota_reduce_fusion{0} @0>
+ positions:
+  iota_reduce_fusion {0}
+ uses:
+ from instruction: %iota_reduce_fusion = (f32[8]{0}, s32[8]{0}) fusion(%dot_general.6), kind=kLoop, calls=%fused_computation.5, metadata={op_name="jit(moe_layer)/reduce" stack_frame_id=3}
+<55 iota_reduce_fusion{1} @0>
+ positions:
+  iota_reduce_fusion {1}
+  reduce.1
+ uses:
+  compare_convert_fusion, operand 0
+  transpose_copy_fusion.1, operand 1
+ from instruction: %iota_reduce_fusion = (f32[8]{0}, s32[8]{0}) fusion(%dot_general.6), kind=kLoop, calls=%fused_computation.5, metadata={op_name="jit(moe_layer)/reduce" stack_frame_id=3}
+<56 compare_convert_fusion @0>
+ positions:
+  compare_convert_fusion
+ uses:
+  dot.1, operand 0
+ from instruction: %compare_convert_fusion = f32[8,2]{1,0} fusion(%reduce.1), kind=kLoop, calls=%fused_computation.4, metadata={op_name="jit(moe_layer)/jit(_one_hot)/convert_element_type" stack_frame_id=4}
+<57 transpose_copy_fusion.1 @0>
+ positions:
+  transpose_copy_fusion.1
+ uses:
+  dot_general.9, operand 0
+  dot_general.8, operand 0
+ from instruction: %transpose_copy_fusion.1 = f32[2,8,32]{2,1,0} fusion(%tokens.1, %reduce.1), kind=kLoop, calls=%fused_computation.2, metadata={op_name="jit(moe_layer)/te,td->etd/transpose" stack_frame_id=5}
+<58 w_up.1 @0>
+ positions:
+  w_up.1
+ uses:
+  dot_general.9, operand 1
+ from instruction: %w_up.1 = f32[2,32,64]{2,1,0} parameter(3), metadata={op_name="w_up"}
+<59 dot_general.9 @0>
+ positions:
+  dot_general.9
+ uses:
+  multiply_multiply_fusion, operand 0
+ from instruction: %dot_general.9 = f32[2,8,64]{2,1,0} dot(%transpose_copy_fusion.1, %w_up.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etd,edf->etf/dot_general" stack_frame_id=7}
+<60 w_gate.1 @0>
+ positions:
+  w_gate.1
+ uses:
+  dot_general.8, operand 1
+ from instruction: %w_gate.1 = f32[2,32,64]{2,1,0} parameter(2), metadata={op_name="w_gate"}
+<61 dot_general.8 @0>
+ positions:
+  dot_general.8
+ uses:
+  multiply_multiply_fusion, operand 1
+ from instruction: %dot_general.8 = f32[2,8,64]{2,1,0} dot(%transpose_copy_fusion.1, %w_gate.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etd,edf->etf/dot_general" stack_frame_id=6}
+<62 multiply_multiply_fusion @0>
+ positions:
+  multiply_multiply_fusion
+ uses:
+  dot_general.10, operand 0
+ from instruction: %multiply_multiply_fusion = f32[2,8,64]{2,1,0} fusion(%dot_general.9, %dot_general.8), kind=kLoop, calls=%fused_computation.1, metadata={op_name="jit(moe_layer)/mul" stack_frame_id=8}
+<63 w_down.1 @0>
+ positions:
+  w_down.1
+ uses:
+  dot_general.10, operand 1
+ from instruction: %w_down.1 = f32[2,64,32]{2,1,0} parameter(4), metadata={op_name="w_down"}
+<64 dot_general.10 @0>
+ positions:
+  dot_general.10
+ uses:
+  transpose_copy_fusion, operand 0
+ from instruction: %dot_general.10 = f32[2,8,32]{2,1,0} dot(%multiply_multiply_fusion, %w_down.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etf,efd->etd/dot_general" stack_frame_id=11}
+<65 transpose_copy_fusion @0>
+ positions:
+  transpose_copy_fusion
+ uses:
+  dot.1, operand 1
+ from instruction: %transpose_copy_fusion = f32[8,2,32]{2,1,0} fusion(%dot_general.10), kind=kLoop, calls=%fused_computation, metadata={op_name="jit(moe_layer)/etf,efd->etd/dot_general" stack_frame_id=11}
+<66 dot.1 @0>
+ positions:
+  dot.1
+ uses:
+ from instruction: %dot.1 = f32[8,32]{1,0} dot(%compare_convert_fusion, %transpose_copy_fusion), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/te,etd->td/dot_general" stack_frame_id=12}
+
+
+HloLiveRange (max 16):
+  InstructionSequence:
+    0:tokens.1
+    1:router_w.1
+    2:w_gate.1
+    3:w_up.1
+    4:w_down.1
+    5:dot_general.6
+    6:iota_reduce_fusion
+    7:reduce.1
+    8:compare_convert_fusion
+    9:transpose_copy_fusion.1
+    10:dot_general.9
+    11:dot_general.8
+    12:multiply_multiply_fusion
+    13:dot_general.10
+    14:transpose_copy_fusion
+    15:dot.1
+  BufferLiveRange:
+    tokens.1{}:0-16
+    router_w.1{}:0-16
+    dot_general.6{}:5-6
+    iota_reduce_fusion{}:6-7
+    iota_reduce_fusion{0}:6-6
+    iota_reduce_fusion{1}:6-9
+    compare_convert_fusion{}:8-15
+    transpose_copy_fusion.1{}:9-11
+    w_up.1{}:0-16
+    dot_general.9{}:10-12
+    w_gate.1{}:0-16
+    dot_general.8{}:11-12
+    multiply_multiply_fusion{}:12-13
+    w_down.1{}:0-16
+    dot_general.10{}:13-14
+    transpose_copy_fusion{}:14-15
+    dot.1{}:15-16
+  Live ranges at 12 (peak):
+    w_down.1{}: 16384 bytes (cumulative: 16384 bytes)
+    w_gate.1{}: 16384 bytes (cumulative: 32768 bytes)
+    w_up.1{}: 16384 bytes (cumulative: 49152 bytes)
+    dot_general.8{}: 4096 bytes (cumulative: 53248 bytes)
+    dot_general.9{}: 4096 bytes (cumulative: 57344 bytes)
+    multiply_multiply_fusion{}: 4096 bytes (cumulative: 61440 bytes)
+    tokens.1{}: 1024 bytes (cumulative: 62464 bytes)
+    router_w.1{}: 256 bytes (cumulative: 62720 bytes)
+    compare_convert_fusion{}: 64 bytes (cumulative: 62784 bytes)
+  Stack trace breakdown for peak usage: 62 784 bytes
+    main.4 (100.0%, total: 62 784 bytes, current: 0 bytes, remaining: 62 784 bytes)
+      ├── w_down (26.1%, total: 16 384 bytes, current: 16 384 bytes, remaining: 46 400 bytes)
+      ├── w_gate (26.1%, total: 16 384 bytes, current: 16 384 bytes, remaining: 30 016 bytes)
+      ├── w_up (26.1%, total: 16 384 bytes, current: 16 384 bytes, remaining: 13 632 bytes)
+      ├── jit(moe_layer)/etd,edf->etf/dot_general (13.0%, total: 8 192 bytes, current: 8 192 bytes, remaining: 5 440 bytes)
+      ├── jit(moe_layer)/mul (6.5%, total: 4 096 bytes, current: 4 096 bytes, remaining: 1 344 bytes)
+      ├── tokens (1.6%, total: 1 024 bytes, current: 1 024 bytes, remaining: 320 bytes)
+      ├── router_w (0.4%, total: 256 bytes, current: 256 bytes, remaining: 64 bytes)
+      └── jit(moe_layer)/jit(_one_hot)/convert_element_type (0.1%, total: 64 bytes, current: 64 bytes, remaining: 0 bytes)

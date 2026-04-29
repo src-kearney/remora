@@ -1,0 +1,107 @@
+HloModule jit_moe_layer, entry_computation_layout={(f32[8,32]{1,0}, f32[32,2]{1,0}, f32[2,32,64]{2,1,0}, f32[2,32,64]{2,1,0}, f32[2,64,32]{2,1,0})->f32[8,32]{1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/Users/seanrck/github/remora/scripts/export/dump_xla_hlo.py"
+
+FunctionNames
+1 "<module>"
+2 "moe_layer"
+3 "silu"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=49 end_line=55 column=10 end_column=1}
+2 {file_name_id=1 function_name_id=2 line=31 end_line=31 column=13 end_column=30}
+3 {file_name_id=1 function_name_id=2 line=32 end_line=32 column=17 end_column=44}
+4 {file_name_id=1 function_name_id=2 line=33 end_line=33 column=15 end_column=56}
+5 {file_name_id=1 function_name_id=2 line=35 end_line=35 column=17 end_column=59}
+6 {file_name_id=1 function_name_id=2 line=37 end_line=37 column=11 end_column=57}
+7 {file_name_id=1 function_name_id=2 line=38 end_line=38 column=11 end_column=55}
+8 {file_name_id=1 function_name_id=2 line=39 end_line=39 column=13 end_column=23}
+9 {file_name_id=1 function_name_id=3 line=24 end_line=24 column=15 end_column=32}
+10 {file_name_id=1 function_name_id=3 line=24 end_line=24 column=11 end_column=32}
+11 {file_name_id=1 function_name_id=2 line=40 end_line=40 column=17 end_column=59}
+12 {file_name_id=1 function_name_id=2 line=42 end_line=42 column=13 end_column=59}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=2}
+4 {file_location_id=4 parent_frame_id=2}
+5 {file_location_id=5 parent_frame_id=2}
+6 {file_location_id=6 parent_frame_id=2}
+7 {file_location_id=7 parent_frame_id=2}
+8 {file_location_id=8 parent_frame_id=2}
+9 {file_location_id=9 parent_frame_id=9}
+10 {file_location_id=10 parent_frame_id=9}
+11 {file_location_id=11 parent_frame_id=2}
+12 {file_location_id=12 parent_frame_id=2}
+
+
+%region_0.1 (reduce.4: f32[], reduce.5: s32[], reduce.6: f32[], reduce.7: s32[]) -> (f32[], s32[]) {
+  %reduce.4 = f32[] parameter(0), metadata={op_name="reduce"}
+  %reduce.6 = f32[] parameter(2), metadata={op_name="reduce"}
+  %gt.1 = pred[] compare(%reduce.4, %reduce.6), direction=GT, metadata={op_name="gt" stack_frame_id=3}
+  %ne.1 = pred[] compare(%reduce.4, %reduce.4), direction=NE, metadata={op_name="ne" stack_frame_id=3}
+  %or.2 = pred[] or(%gt.1, %ne.1), metadata={op_name="or" stack_frame_id=3}
+  %select_n.2 = f32[] select(%or.2, %reduce.4, %reduce.6), metadata={op_name="select_n" stack_frame_id=3}
+  %eq.1 = pred[] compare(%reduce.4, %reduce.6), direction=EQ, metadata={op_name="eq" stack_frame_id=3}
+  %reduce.5 = s32[] parameter(1), metadata={op_name="reduce"}
+  %reduce.7 = s32[] parameter(3), metadata={op_name="reduce"}
+  %lt.1 = pred[] compare(%reduce.5, %reduce.7), direction=LT, metadata={op_name="lt" stack_frame_id=3}
+  %and.1 = pred[] and(%eq.1, %lt.1), metadata={op_name="and" stack_frame_id=3}
+  %or.3 = pred[] or(%or.2, %and.1), metadata={op_name="or" stack_frame_id=3}
+  %select_n.3 = s32[] select(%or.3, %reduce.5, %reduce.7), metadata={op_name="select_n" stack_frame_id=3}
+  ROOT %tuple.1 = (f32[], s32[]) tuple(%select_n.2, %select_n.3)
+}
+
+%argmax.2 (jit_moe_layer_.1: f32[8,2]) -> s32[8] {
+  %jit_moe_layer_.1 = f32[8,2]{1,0} parameter(0), metadata={op_name="jit(moe_layer)"}
+  %iota.2 = s32[2]{0} iota(), iota_dimension=0, metadata={op_name="iota" stack_frame_id=3}
+  %iota.3 = s32[8,2]{1,0} broadcast(%iota.2), dimensions={1}, metadata={op_name="iota" stack_frame_id=3}
+  %constant.4 = f32[] constant(-inf)
+  %constant.3 = s32[] constant(0)
+  %reduce.11 = (f32[8]{0}, s32[8]{0}) reduce(%jit_moe_layer_.1, %iota.3, %constant.4, %constant.3), dimensions={1}, to_apply=%region_0.1, metadata={op_name="reduce" stack_frame_id=3}
+  %reduce.12 = f32[8]{0} get-tuple-element(%reduce.11), index=0, metadata={op_name="reduce" stack_frame_id=3}
+  ROOT %reduce.13 = s32[8]{0} get-tuple-element(%reduce.11), index=1, metadata={op_name="reduce" stack_frame_id=3}
+}
+
+%_one_hot.3 (Arg_0.1: s32[8]) -> f32[8,2] {
+  %Arg_0.1 = s32[8]{0} parameter(0)
+  %broadcast_in_dim.1 = s32[8,1]{1,0} reshape(%Arg_0.1), metadata={op_name="broadcast_in_dim" stack_frame_id=4}
+  %eq.9 = s32[8,1]{1,0} broadcast(%broadcast_in_dim.1), dimensions={0,1}, metadata={op_name="eq" stack_frame_id=4}
+  %eq.10 = s32[8]{0} reshape(%eq.9), metadata={op_name="eq" stack_frame_id=4}
+  %eq.11 = s32[8,2]{1,0} broadcast(%eq.10), dimensions={0}, metadata={op_name="eq" stack_frame_id=4}
+  %iota.6 = s32[2]{0} iota(), iota_dimension=0, metadata={op_name="iota" stack_frame_id=4}
+  %iota.7 = s32[1,2]{1,0} reshape(%iota.6), metadata={op_name="iota" stack_frame_id=4}
+  %eq.12 = s32[1,2]{1,0} broadcast(%iota.7), dimensions={0,1}, metadata={op_name="eq" stack_frame_id=4}
+  %eq.13 = s32[2]{0} reshape(%eq.12), metadata={op_name="eq" stack_frame_id=4}
+  %eq.14 = s32[8,2]{1,0} broadcast(%eq.13), dimensions={1}, metadata={op_name="eq" stack_frame_id=4}
+  %eq.15 = pred[8,2]{1,0} compare(%eq.11, %eq.14), direction=EQ, metadata={op_name="eq" stack_frame_id=4}
+  ROOT %convert_element_type.1 = f32[8,2]{1,0} convert(%eq.15), metadata={op_name="convert_element_type" stack_frame_id=4}
+}
+
+ENTRY %main.4 (tokens.1: f32[8,32], router_w.1: f32[32,2], w_gate.1: f32[2,32,64], w_up.1: f32[2,32,64], w_down.1: f32[2,64,32]) -> f32[8,32] {
+  %tokens.1 = f32[8,32]{1,0} parameter(0), metadata={op_name="tokens"}
+  %router_w.1 = f32[32,2]{1,0} parameter(1), metadata={op_name="router_w"}
+  %dot_general.6 = f32[8,2]{1,0} dot(%tokens.1, %router_w.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(moe_layer)/dot_general" stack_frame_id=2}
+  %jit_moe_layer_.3 = s32[8]{0} call(%dot_general.6), to_apply=%argmax.2, metadata={op_name="jit(moe_layer)" stack_frame_id=3}
+  %jit__one_hot_.1 = f32[8,2]{1,0} call(%jit_moe_layer_.3), to_apply=%_one_hot.3, metadata={op_name="jit(moe_layer)/jit(_one_hot)" stack_frame_id=4}
+  %dot_general.7 = f32[8,32,2]{2,1,0} dot(%tokens.1, %jit__one_hot_.1), lhs_batch_dims={0}, lhs_contracting_dims={}, rhs_batch_dims={0}, rhs_contracting_dims={}, metadata={op_name="jit(moe_layer)/te,td->etd/dot_general" stack_frame_id=5}
+  %transpose.1 = f32[2,8,32]{0,2,1} transpose(%dot_general.7), dimensions={2,0,1}, metadata={op_name="jit(moe_layer)/te,td->etd/transpose" stack_frame_id=5}
+  %w_gate.1 = f32[2,32,64]{2,1,0} parameter(2), metadata={op_name="w_gate"}
+  %dot_general.8 = f32[2,8,64]{2,1,0} dot(%transpose.1, %w_gate.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etd,edf->etf/dot_general" stack_frame_id=6}
+  %constant.5 = f32[] constant(1)
+  %broadcast.1 = f32[2,8,64]{2,1,0} broadcast(%constant.5), dimensions={}
+  %neg.1 = f32[2,8,64]{2,1,0} negate(%dot_general.8), metadata={op_name="jit(moe_layer)/neg" stack_frame_id=9}
+  %exp.1 = f32[2,8,64]{2,1,0} exponential(%neg.1), metadata={op_name="jit(moe_layer)/exp" stack_frame_id=9}
+  %add.1 = f32[2,8,64]{2,1,0} add(%exp.1, %broadcast.1), metadata={op_name="jit(moe_layer)/add" stack_frame_id=9}
+  %div.1 = f32[2,8,64]{2,1,0} divide(%broadcast.1, %add.1), metadata={op_name="jit(moe_layer)/div" stack_frame_id=9}
+  %mul.2 = f32[2,8,64]{2,1,0} multiply(%dot_general.8, %div.1), metadata={op_name="jit(moe_layer)/mul" stack_frame_id=10}
+  %w_up.1 = f32[2,32,64]{2,1,0} parameter(3), metadata={op_name="w_up"}
+  %dot_general.9 = f32[2,8,64]{2,1,0} dot(%transpose.1, %w_up.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etd,edf->etf/dot_general" stack_frame_id=7}
+  %mul.3 = f32[2,8,64]{2,1,0} multiply(%mul.2, %dot_general.9), metadata={op_name="jit(moe_layer)/mul" stack_frame_id=8}
+  %w_down.1 = f32[2,64,32]{2,1,0} parameter(4), metadata={op_name="w_down"}
+  %dot_general.10 = f32[2,8,32]{2,1,0} dot(%mul.3, %w_down.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(moe_layer)/etf,efd->etd/dot_general" stack_frame_id=11}
+  ROOT %dot_general.11 = f32[8,32]{1,0} dot(%jit__one_hot_.1, %dot_general.10), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(moe_layer)/te,etd->td/dot_general" stack_frame_id=12}
+}
+
