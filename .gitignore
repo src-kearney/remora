@@ -70,6 +70,7 @@ __pycache__/
 
 # Docs (local drafts)
 docs/
+paper/
 
 # Phase dump output
 mlir/phases/

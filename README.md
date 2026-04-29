@@ -2,158 +2,71 @@
 
 [Mystic Remora](https://scryfall.com/card/ice/87/mystic-remora)
 
-```bash
-# Lower a StableHLO MoE to PTX and print all kernels (no GPU required)
-compiler/build/remora mlir/stablehlo/simple_moe.mlir --emit-ptx
+An MLIR/StableHLO compiler prototype that recovers per-expert program structure from batched MoE IR and uses it to make expert-specific compilation decisions.
 
-# JIT-compile and run on CPU
-compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir --test=elementwise
-compiler/build/remora mlir/stablehlo/simple_attention_projection.mlir  --test=projection
+## What it does
 
-# Compile and run on GPU, validate output (requires CUDA)
-compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir --test=elementwise --run-gpu
+Batched MoE compilation erases expert identity — all experts become one `dot_general` with a batch dim. Remora runs three passes over the IR to recover it:
 
-# Dump IR after every lowering pass
-compiler/build/remora mlir/stablehlo/simple_attention_projection.mlir --test=projection --mlir-print-ir-after-all
-```
+1. **moe-expert-outlining** — extracts each expert into its own `@expert_slot_N` function with static shapes
+2. **moe-expert-cost-analysis** — computes FLOPs, bytes, arithmetic intensity per expert from tensor shapes
+3. **moe-expert-specialization** — selects tile configs (BLOCK_M, BLOCK_N) per expert based on cost class
 
-## Prerequisites
-
-- `git`, `cmake` >= 3.20, `ninja`, `python3`
-- ~30 GB disk space (LLVM build)
-- NVIDIA GPU + CUDA toolkit required for `--run-gpu` (not required for `--emit-ptx`)
+The compiler writes `compiler_decisions.json`; the Python dispatch reads it and fires the right Triton kernel per expert.
 
 ## Setup
 
-### 1. Build MLIR and stablehlo-opt from source
-
 ```bash
-scripts/bootstrap.sh
+scripts/bootstrap.sh          # builds LLVM + StableHLO (~30 GB, takes a while)
+scripts/bootstrap.sh --nvptx  # add NVPTX for --emit-ptx / --run-gpu
 ```
 
-Add `--nvptx` if you want `--emit-ptx` / `--run-gpu` support (adds NVPTX target and build tools; takes longer):
+Bootstrap clones `llvm-project` and `stablehlo` into `build-deps/` and prints
+the exact `.env` values at the end:
 
-```bash
-scripts/bootstrap.sh --nvptx
+```
+MLIR_DIR=build-deps/llvm-build/lib/cmake/mlir
+STABLEHLO_ROOT=build-deps/stablehlo
+STABLEHLO_BUILD=build-deps/stablehlo/build
 ```
 
-To use a custom build directory:
-
 ```bash
-scripts/bootstrap.sh --build-dir /path/to/build-deps
+cp .env.example .env          # paste the paths above into .env
+sh scripts/build.sh           # produces compiler/build/remora
 ```
 
-Bootstrap prints the exact `.env` values you need for the next step.
-
-### 2. Configure .env
-
+**GPU benchmarks** (sweep scripts, correctness check) require a CUDA environment:
 ```bash
-cp .env.example .env
+pip install -r benchmarks/requirements.txt
+# vLLM separately if running comparison benchmarks — see requirements.txt
 ```
 
-Fill in the paths printed by bootstrap:
+## Run the pipeline
 
 ```bash
-MLIR_DIR=/path/to/llvm-build/lib/cmake/mlir
-STABLEHLO_ROOT=/path/to/stablehlo
-STABLEHLO_BUILD=/path/to/stablehlo/build
-LLVM_NVPTX_LIB_DIR=/path/to/llvm-project/build/lib  # needed for --emit-ptx
+# Full three-pass pipeline on the heterogeneous MoE IR
+python3 scripts/emit_compiler_decisions.py \
+    --input mlir/stablehlo/heterogeneous_moe_layer.mlir \
+    --num-experts 1 \
+    --output compiler_decisions.json
+
+# End-to-end wire test
+bash scripts/test_wire.sh
 ```
 
-### 3. Build remora
+## Verify
 
 ```bash
-sh scripts/build.sh
+python3 scripts/verify/verify_heterogeneous_outlining.py  # 40 checks
+python3 scripts/verify/verify_cost_analysis.py            # 58 checks
+python3 scripts/verify/verify_specialization.py           # 45 checks
 ```
 
-Produces `compiler/build/remora`.
-
----
-
-## Usage: MoE end-to-end
-
-### 1. Export StableHLO from JAX
+## Inspect IR directly
 
 ```bash
-cd scripts/export
-pip install -r requirements.txt
-python simple_moe.py
-```
-
-Writes `mlir/stablehlo/simple_moe.mlir` — a 2-expert SwiGLU MoE (T=8 tokens, D=32 hidden, E=2 experts, F=64 FFN dim).
-
-### 2. CPU path
-
-Lower through StableHLO → Linalg → LLVM dialect, JIT-compile, and execute on CPU:
-
-```bash
-compiler/build/remora mlir/stablehlo/simple_moe.mlir --test=elementwise
-```
-
-### 3. GPU path: emit PTX
-
-Lower through the GPU pipeline and emit PTX for each kernel. Runs on CPU (no GPU required):
-
-```bash
-compiler/build/remora mlir/stablehlo/simple_moe.mlir --emit-ptx
-```
-
-Emits one PTX blob per `gpu.module`. For the MoE this produces 17 kernels.
-
-### 4. GPU path: run on device
-
-Requires a GPU and a build with CUDA toolkit present (`REMORA_CUDA` defined):
-
-```bash
-compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir \
-  --test=elementwise --run-gpu
-```
-
-Launches the kernel via the CUDA Driver API and validates output against the expected value (max abs error < 1e-5).
-
----
-
-## Other kernels
-
-The elementwise (`relu(x + bias)`) and projection (`matmul(x, w)`) kernels are simpler scaffolding for validating the pipeline:
-
-```bash
-# CPU JIT
-compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir --test=elementwise
-compiler/build/remora mlir/stablehlo/simple_attention_projection.mlir  --test=projection
-
-# Wrapper scripts
-sh scripts/run/run_elementwise.sh
-sh scripts/run/run_projection.sh
-
-# Verify against JAX reference
-diff <(sh scripts/run/run_elementwise.sh) <(python scripts/verify/verify_elementwise.py)
-diff <(sh scripts/run/run_projection.sh)  <(python scripts/verify/verify_projection.py)
-```
-
----
-
-## Debugging
-
-Dump IR after each lowering pass:
-
-```bash
-compiler/build/remora mlir/stablehlo/simple_attention_elementwise.mlir \
-  --test=elementwise --mlir-print-ir-after-all
-```
-
-Lower StableHLO → Linalg manually and inspect:
-
-```bash
-scripts/explore/lower_elementwise_to_linalg.sh
-scripts/explore/lower_projection_to_linalg.sh
-
-diff mlir/stablehlo/simple_attention_elementwise.mlir \
-     mlir/linalg/attention_elementwise_lowered_to_linalg.mlir
-```
-
-Step through progressive lowering passes:
-
-```bash
-scripts/explore/elementwise-explore.sh
+compiler/build/remora mlir/stablehlo/heterogeneous_moe_layer.mlir \
+    --pass-pipeline='moe-expert-outlining{num_experts=1},moe-expert-cost-analysis,moe-expert-specialization' \
+    --no-execute \
+    --dump-compilation-phases-to=out/
 ```
