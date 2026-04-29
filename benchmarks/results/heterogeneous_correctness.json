@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "hidden_dim": 4096,
+    "tokens_per_expert": 512,
+    "atol": 0.001,
+    "seed": 42,
+    "decisions_file": "compiler_decisions.json",
+    "status": "PASS"
+  },
+  "results": [
+    {
+      "slot": 0,
+      "intermediate_dim": 14336,
+      "cost_class": "large",
+      "tile_class": "large",
+      "BLOCK_M": 128,
+      "max_abs_error": 6.103515625e-05,
+      "mean_abs_error": 3.303883659100393e-06,
+      "pass": true
+    },
+    {
+      "slot": 1,
+      "intermediate_dim": 14336,
+      "cost_class": "large",
+      "tile_class": "large",
+      "BLOCK_M": 128,
+      "max_abs_error": 6.103515625e-05,
+      "mean_abs_error": 3.30138141180214e-06,
+      "pass": true
+    },
+    {
+      "slot": 2,
+      "intermediate_dim": 8192,
+      "cost_class": "medium",
+      "tile_class": "medium",
+      "BLOCK_M": 64,
+      "max_abs_error": 6.103515625e-05,
+      "mean_abs_error": 2.4885616767278407e-06,
+      "pass": true
+    },
+    {
+      "slot": 3,
+      "intermediate_dim": 8192,
+      "cost_class": "medium",
+      "tile_class": "medium",
+      "BLOCK_M": 64,
+      "max_abs_error": 6.103515625e-05,
+      "mean_abs_error": 2.4825512809911743e-06,
+      "pass": true
+    },
+    {
+      "slot": 4,
+      "intermediate_dim": 4096,
+      "cost_class": "small",
+      "tile_class": "small",
+      "BLOCK_M": 32,
+      "max_abs_error": 3.0517578125e-05,
+      "mean_abs_error": 1.7467259567638393e-06,
+      "pass": true
+    },
+    {
+      "slot": 5,
+      "intermediate_dim": 4096,
+      "cost_class": "small",
+      "tile_class": "small",
+      "BLOCK_M": 32,
+      "max_abs_error": 3.0517578125e-05,
+      "mean_abs_error": 1.7484010186308296e-06,
+      "pass": true
+    },
+    {
+      "slot": 6,
+      "intermediate_dim": 2048,
+      "cost_class": "tiny",
+      "tile_class": "tiny",
+      "BLOCK_M": 16,
+      "max_abs_error": 3.0517578125e-05,
+      "mean_abs_error": 1.2363586847641272e-06,
+      "pass": true
+    },
+    {
+      "slot": 7,
+      "intermediate_dim": 2048,
+      "cost_class": "tiny",
+      "tile_class": "tiny",
+      "BLOCK_M": 16,
+      "max_abs_error": 3.0517578125e-05,
+      "mean_abs_error": 1.2347304618742783e-06,
+      "pass": true
+    }
+  ]
+}
