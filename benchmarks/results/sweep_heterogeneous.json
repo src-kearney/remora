@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "hidden_dim": 4096,
+    "tokens_per_expert": 512,
+    "warmup_iters": 5,
+    "timed_iters": 50,
+    "baseline_block_m": 64,
+    "decisions_file": "compiler_decisions.json",
+    "total_baseline_ms": 4.9519359320402145,
+    "total_remora_ms": 6.265983939170837,
+    "total_speedup": 0.7902886410359188
+  },
+  "results": [
+    {
+      "slot": 0,
+      "intermediate_dim": 14336,
+      "cost_class": "large",
+      "baseline_block_m": 64,
+      "baseline_ms": 1.1877119541168213,
+      "remora_block_m": 128,
+      "remora_ms": 1.4366719722747803,
+      "speedup": 0.8267106041167047,
+      "winner": "baseline"
+    },
+    {
+      "slot": 1,
+      "intermediate_dim": 14336,
+      "cost_class": "large",
+      "baseline_block_m": 64,
+      "baseline_ms": 1.18886399269104,
+      "remora_block_m": 128,
+      "remora_ms": 1.4097919464111328,
+      "speedup": 0.8432903845971721,
+      "winner": "baseline"
+    },
+    {
+      "slot": 2,
+      "intermediate_dim": 8192,
+      "cost_class": "medium",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.6901760101318359,
+      "remora_block_m": 64,
+      "remora_ms": 0.6758400201797485,
+      "speedup": 1.021212105711459,
+      "winner": "remora"
+    },
+    {
+      "slot": 3,
+      "intermediate_dim": 8192,
+      "cost_class": "medium",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.7045120000839233,
+      "remora_block_m": 64,
+      "remora_ms": 0.7012479901313782,
+      "speedup": 1.004654572987701,
+      "winner": "~tie"
+    },
+    {
+      "slot": 4,
+      "intermediate_dim": 4096,
+      "cost_class": "small",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.41471999883651733,
+      "remora_block_m": 32,
+      "remora_ms": 0.549888014793396,
+      "speedup": 0.7541899217285832,
+      "winner": "baseline"
+    },
+    {
+      "slot": 5,
+      "intermediate_dim": 4096,
+      "cost_class": "small",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.4055039882659912,
+      "remora_block_m": 32,
+      "remora_ms": 0.5457919836044312,
+      "speedup": 0.7429643535400197,
+      "winner": "baseline"
+    },
+    {
+      "slot": 6,
+      "intermediate_dim": 2048,
+      "cost_class": "tiny",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.1812479943037033,
+      "remora_block_m": 16,
+      "remora_ms": 0.47513601183891296,
+      "speedup": 0.3814654957476733,
+      "winner": "baseline"
+    },
+    {
+      "slot": 7,
+      "intermediate_dim": 2048,
+      "cost_class": "tiny",
+      "baseline_block_m": 64,
+      "baseline_ms": 0.17919999361038208,
+      "remora_block_m": 16,
+      "remora_ms": 0.4716159999370575,
+      "speedup": 0.37997013170523974,
+      "winner": "baseline"
+    }
+  ]
+}
