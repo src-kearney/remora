@@ -4,15 +4,7 @@
 
 An MLIR/StableHLO compiler prototype that recovers per-expert program structure from batched MoE IR and uses it to make expert-specific compilation decisions.
 
-## What it does
-
-Batched MoE compilation erases expert identity — all experts become one `dot_general` with a batch dim. Remora runs three passes over the IR to recover it:
-
-1. **moe-expert-outlining** — extracts each expert into its own `@expert_slot_N` function with static shapes
-2. **moe-expert-cost-analysis** — computes FLOPs, bytes, arithmetic intensity per expert from tensor shapes
-3. **moe-expert-specialization** — selects tile configs (BLOCK_M, BLOCK_N) per expert based on cost class
-
-The compiler writes `compiler_decisions.json`; the Python dispatch reads it and fires the right Triton kernel per expert.
+Still tinkering.
 
 ## Setup
 
