@@ -2,9 +2,9 @@
 
 [Mystic Remora](https://scryfall.com/card/ice/87/mystic-remora)
 
-An MLIR/StableHLO compiler prototype that recovers per-expert program structure from batched MoE IR and uses it to make expert-specific compilation decisions.
+`remora` is my attempt to solve the most important problem in the world. That particular problem: figuring out what the most important problem is.
 
-Still tinkering.
+An MLIR/StableHLO compiler prototype. Still tinkering.
 
 ## Setup
 
