@@ -68,8 +68,6 @@ __pycache__/
 .env.*
 !.env.example
 
-# Docs (local drafts)
-docs/
 paper/
 
 # Phase dump output
