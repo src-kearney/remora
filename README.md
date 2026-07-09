@@ -6,7 +6,7 @@ A StableHLO → MLIR → PTX compiler, with a CPU/LLVM reference path.
 
 ## Status
 
-| | |
+| Component | Status |
 |---|---|
 | NVIDIA (PTX) lowering | done |
 | Benchmark harness (GEMM, FlashAttention, % of peak) | in progress |
