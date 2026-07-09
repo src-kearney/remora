@@ -1,8 +1,5 @@
 #include "cpu.h"
 #include "gpu.h"
-#include "passes/ExpertCostAnalysis.h"
-#include "passes/ExpertOutlining.h"
-#include "passes/ExpertSpecialization.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -53,9 +50,9 @@ int main(int argc, char **argv) {
   }
 
   if (!options.noExecute && !emitPtxMode && !runGpuMode &&
-      test != "elementwise" && test != "projection" && test != "ner") {
+      test != "elementwise" && test != "projection") {
     llvm::errs() << "Unknown test '" << test
-                 << "'. Use --test=elementwise, --test=projection, or --test=ner\n";
+                 << "'. Use --test=elementwise or --test=projection\n";
     return 1;
   }
 
@@ -63,9 +60,6 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
   mlir::stablehlo::registerAllDialects(registry);
   mlir::registerAllPasses();
-  remora::passes::registerExpertOutliningPass();
-  remora::passes::registerExpertCostAnalysisPass();
-  remora::passes::registerExpertSpecializationPass();
   mlir::stablehlo::registerStablehloLinalgTransformsPasses();
   mlir::registerAllExtensions(registry); // we should probably turn this off / make more finer grainer
   mlir::registerBuiltinDialectTranslation(registry);
